@@ -1,20 +1,25 @@
-# AI Engineering Course
+# Agentic Engineering
 
-Public course materials for the AI Engineering course at Kube College. The course runs over five modules. Each module contains lab instructions for the weekly sessions and a requirements document for every project option students can choose.
+Public lab materials for the Agentic Engineering course at Kube College. The course runs over five weeks. Students choose one project in Week 1 and develop it in their own GitHub repository for the rest of the course. Each week adds an engineering practice: coding-agent configuration, specification-driven development, loop engineering, and coding agents as general-purpose agents.
 
-## Modules
+## Weeks
 
-| Module | Focus | Labs |
+| Week | Focus | Instructions |
 | --- | --- | --- |
-| 01 | Agentic engineering: coding agents, specification-driven development, and loop engineering | [01_Agentic_Engineering/labs](01_Agentic_Engineering/labs/README.md) |
-| 02 | Designing agent systems | Work in progress |
-| 03 | From RAG to agentic search | Work in progress |
-| 04 | Evals and benchmarks | Work in progress |
-| 05 | Internet of agents | Work in progress |
+| 1 | Select a project, spike it in acceleration posture, interrogate the spike in exploration posture, record design decisions, and establish a GitHub repository | [Week 1: Spike, Interrogate, Decide, Establish](week-01/README.md) |
+| 2 | Coding-agent configuration: instruction files, MCP, skills, hooks, subagents | Work in progress |
+| 3 | Specification-driven development and LLM wikis for context management | Work in progress |
+| 4 | Loop engineering: decomposing the delivery lifecycle into bounded loops | Work in progress |
+| 5 | Coding agents as general-purpose agents and final-project presentation | Work in progress |
 
-## Using the labs
+## Project options
 
-Students build one project of their choice across the five weeks of a module, in their own GitHub repository. The lab guides describe what to build each week, what evidence to record, and what the next week depends on. There is no starter code.
+Students choose one project in Week 1 and keep it throughout the course. There is no starter code.
+
+- [Event Booking and Waitlist](week-01/projects/event-booking.md)
+- [Support Ticket SLA and Escalation](week-01/projects/support-ticket-sla.md)
+- [Inventory Reservation and Fulfilment](week-01/projects/inventory-reservation.md)
+- [Multimodal AI Companion](week-01/projects/multimodal-ai-companion.md), an advanced AI application option
 
 Lecture slides and playbooks are distributed through the course platform.
 
