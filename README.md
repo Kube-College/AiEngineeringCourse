@@ -7,7 +7,7 @@ Public lab materials for the Agentic Engineering course at Kube College. The cou
 | Week | Focus | Instructions |
 | --- | --- | --- |
 | 1 | Select a project, spike it in acceleration posture, interrogate the spike in exploration posture, record design decisions, and establish a GitHub repository | [Week 1: Spike, Interrogate, Decide, Establish](week-01/README.md) |
-| 2 | Coding-agent configuration: instruction files, MCP, skills, hooks, subagents | Work in progress |
+| 2 | Configure a coding agent for the project: list what the agent should have been told, write an instruction file, package a test-first skill, add a reviewer subagent with a gate, connect one MCP server, and deliver one deferred behaviour through the configured agent | [Week 2: Configure, Calibrate, Review, Deliver](week-02/README.md) |
 | 3 | Specification-driven development and LLM wikis for context management | Work in progress |
 | 4 | Loop engineering: decomposing the delivery lifecycle into bounded loops | Work in progress |
 | 5 | Coding agents as general-purpose agents and final-project presentation | Work in progress |
