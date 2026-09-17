@@ -43,15 +43,17 @@ These are suggested planning allowances. Finish implementation and review as tak
 
 ## 1. Select and explore a framework
 
-Choose **one** of the frameworks discussed in class. These links are starting points for your investigation:
+Choose **one** of the frameworks or skill systems discussed in class. These links are starting points for your investigation:
 
 - [Superpowers](https://github.com/obra/superpowers), used in the seminar walkthrough.
 - [Spec Kit](https://github.com/github/spec-kit).
 - [OpenSpec](https://github.com/Fission-AI/OpenSpec).
 - [Kiro specs](https://kiro.dev/docs/specs/).
 - [BMAD](https://docs.bmad-method.org/).
+- [Addy Osmani's Agent Skills](https://github.com/addyosmani/agent-skills/tree/main).
+- [Matt Pocock's skills](https://github.com/mattpocock/skills).
 
-If you choose another workflow shown in class, identify the specific skills or components you will use and how they cover specification through implementation. Choose a route supported by your coding client. Record the framework version or source revision, documentation URL and access date, coding client, and model.
+For a skill system, identify the specific skills you will use, their sequence, and how they cover specification through implementation. Apply the same exploration and artefact-mapping exercise to that workflow. If you choose another workflow shown in class, identify its components in the same way. Choose a route supported by your coding client. Record the framework or skill-system version or source revision, documentation URL and access date, coding client, and model.
 
 ### Use exploration mode
 
