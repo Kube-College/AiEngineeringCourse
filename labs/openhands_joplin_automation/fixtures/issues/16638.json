@@ -1,0 +1,9 @@
+{
+  "source_url": "https://github.com/laurent22/joplin/issues/16638",
+  "captured_at": "2026-09-23T10:25:42Z",
+  "base_sha": "1d6beb0443e6d958b2c241f45978bd5de069f309",
+  "scope": "packages/lib/models/Note.ts and packages/lib/markdownUtils.ts",
+  "description": "Generating a title from the first body line removes underscores inside date-like text such as YYYY_MM_DD.",
+  "validation_profile": "core-16638",
+  "expected_failure": "Note.defaultTitleFromBody('YYYY_MM_') returns YYYYMM and the matching core regression assertion fails."
+}

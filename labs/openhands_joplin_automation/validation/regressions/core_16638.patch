@@ -1,0 +1,32 @@
+diff --git a/packages/lib/models/Note.test.ts b/packages/lib/models/Note.test.ts
+index e46495a9b..0a00caab8 100644
+--- a/packages/lib/models/Note.test.ts
++++ b/packages/lib/models/Note.test.ts
+@@ -33,6 +33,27 @@ async function allItems() {
+ }
+ 
+ describe('models/Note', () => {
++	it.each(['YYYY_MM', 'YYYY_MM_', 'YYYY_MM_DD'])(
++		'preserves internal underscores in %s', body => {
++			expect(Note.defaultTitleFromBody(body)).toBe(body);
++		},
++	);
++
++	it.each([
++		['_emphasis_', 'emphasis'],
++		['# Heading', 'Heading'],
++		['日本_語', '日本_語'],
++		['', ''],
++	])('keeps established title parsing for %s', (body, expected) => {
++		expect(Note.defaultTitleFromBody(body)).toBe(expected);
++	});
++
++	it('preserves a user-supplied title when saving a note', async () => {
++		const folder = await Folder.save({ title: 'Notebook' });
++		const note = await Note.save({ title: 'My chosen title', body: 'YYYY_MM_DD', parent_id: folder.id });
++		expect((await Note.load(note.id)).title).toBe('My chosen title');
++	});
++
+ 	beforeEach(async () => {
+ 		await setupDatabaseAndSynchronizer(1);
+ 		await switchClient(1);

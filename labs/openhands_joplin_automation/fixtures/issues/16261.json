@@ -1,0 +1,9 @@
+{
+  "source_url": "https://github.com/laurent22/joplin/issues/16261",
+  "captured_at": "2026-09-23T10:25:42Z",
+  "base_sha": "1d6beb0443e6d958b2c241f45978bd5de069f309",
+  "scope": "packages/app-desktop/gui/PromptDialog.tsx and tag-dialog interaction",
+  "description": "After typing an existing tag prefix and erasing it, Enter can select the suggestion instead of closing the tag dialog without changing associations.",
+  "validation_profile": "desktop-16261",
+  "expected_failure": "The cleared-input Enter interaction leaves the dialog open or adds the previously suggested tag; reopening the dialog shows an unexpected association."
+}
