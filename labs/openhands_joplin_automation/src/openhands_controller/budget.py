@@ -30,7 +30,7 @@ class Budget:
             if not limit:
                 raise KeyError(issue)
             spent = db.execute(
-                "SELECT COALESCE(SUM(CASE WHEN status='settled' THEN actual_microusd ELSE reserved_microusd END),0) AS total FROM usage WHERE repo=? AND issue_number=?",
+                "SELECT COALESCE(SUM(CASE WHEN status='settled' THEN actual_microusd ELSE max(reserved_microusd, COALESCE(reported_microusd,0)) END),0) AS total FROM usage WHERE repo=? AND issue_number=?",
                 issue,
             ).fetchone()["total"]
             if spent + estimate > limit["budget_limit"]:

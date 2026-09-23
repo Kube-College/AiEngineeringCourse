@@ -129,6 +129,27 @@ class Store:
         with self.transaction() as db:
             db.execute(f"UPDATE dispatches SET {assignments} WHERE id=?", (*changes.values(), dispatch_id))
 
+    def transition_dispatch(self, dispatch_id: str, issue: IssueKey, version: int,
+                            state: str, status: str, result_json: str | None = None,
+                            **changes: object) -> None:
+        allowed = {"approval_revision", "reason", "resume_state", "validation_profile",
+                   "candidate_sha", "published_sha", "pr_url", "review_cycles", "stop_requested"}
+        if set(changes) - allowed:
+            raise ValueError("invalid workflow transition fields")
+        assignments = ", ".join(f"{name}=?" for name in changes)
+        extra = f", {assignments}" if assignments else ""
+        with self.transaction() as db:
+            updated = db.execute("UPDATE dispatches SET status=?, result_json=? WHERE id=? AND repo=? AND issue_number=?",
+                                 (status, result_json, dispatch_id, *issue))
+            if updated.rowcount != 1:
+                raise KeyError(dispatch_id)
+            updated = db.execute(
+                f"UPDATE workflows SET state=?, version=version+1{extra} WHERE repo=? AND issue_number=? AND version=?",
+                (state, *changes.values(), *issue, version),
+            )
+            if updated.rowcount != 1:
+                raise VersionConflict(issue)
+
     def active_dispatch(self) -> dict[str, object] | None:
         with self.connection() as db:
             row = db.execute("SELECT * FROM dispatches WHERE status IN ('intent','retryable','created','running','resuming','uncertain','stopping') LIMIT 1").fetchone()

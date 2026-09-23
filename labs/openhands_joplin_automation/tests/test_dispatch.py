@@ -1,10 +1,12 @@
 import pytest
+import sqlite3
 from time import sleep
 from threading import Event as ThreadEvent
 from time import monotonic
 
 from openhands_controller.controller import Controller
 from openhands_controller.scheduler import SchedulerLock
+from openhands_controller.contracts import Event, RunObservation
 from support import Harness
 
 
@@ -173,6 +175,68 @@ def test_tick_stays_responsive_during_remote_create(tmp_path):
     finally:
         release.set()
         h.controller.close()
+
+
+def test_dispatch_result_and_workflow_transition_commit_together(tmp_path):
+    h = Harness(tmp_path)
+    h.run_to("implementing")
+    h.complete("implementation", summary="patch", changed_paths=["packages/lib/models/Note.ts"])
+    dispatch = next(d for d in h.store.dispatches(("demo/joplin", 1)) if d.role == "implementation")
+    with h.store.transaction() as db:
+        db.execute("""CREATE TRIGGER fail_validating BEFORE UPDATE OF state ON workflows
+                   WHEN NEW.state='validating' BEGIN SELECT RAISE(ABORT, 'simulated crash'); END""")
+    for _ in range(100):
+        try:
+            h.controller.tick()
+        except sqlite3.DatabaseError:
+            break
+        sleep(0.001)
+    else:
+        pytest.fail("transition fault was not reached")
+    assert h.store.dispatch_row(dispatch.id)["status"] == "running"
+    with h.store.transaction() as db:
+        db.execute("DROP TRIGGER fail_validating")
+    h.restart()
+    h.run_to("reviewing")
+    assert len([d for d in h.store.dispatches(("demo/joplin", 1)) if d.role == "implementation"]) == 1
+
+
+def test_late_running_observation_stops_agent_before_releasing_slot(tmp_path):
+    h = Harness(tmp_path)
+    h.run_to("implementing")
+    dispatch = next(d for d in h.store.dispatches(("demo/joplin", 1)) if d.role == "implementation")
+    entered, release = ThreadEvent(), ThreadEvent()
+    original_observe = h.agent.observe
+
+    def delayed_observe(current):
+        if h.agent.status[current.id] == "failed":
+            return original_observe(current)
+        entered.set()
+        assert release.wait(2)
+        return RunObservation("running")
+
+    h.agent.observe = delayed_observe
+    h.controller.tick()
+    assert entered.wait(1)
+    h.clock.advance(1201)
+    release.set()
+    h.run_to("needs-human")
+    assert h.agent.status[dispatch.id] == "failed"
+    assert h.store.active_dispatch() is None
+
+
+def test_unknown_remote_status_keeps_global_slot(tmp_path):
+    h = Harness(tmp_path)
+    h.run_to("implementing")
+    h.agent.observe = lambda dispatch: RunObservation("unknown")
+    h.run_to("needs-human")
+    active = h.store.active_dispatch()
+    assert active is not None and active["status"] == "uncertain"
+    created = list(h.agent.created)
+    h.controller.handle(Event("issue-2", "issue", ("demo/joplin", 2), "r1", "maintainer", {"title": "second"}))
+    for _ in range(5):
+        h.controller.tick()
+    assert h.agent.created == created
 
 
 def test_simulated_validation_and_review_handoff(tmp_path):

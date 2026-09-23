@@ -15,14 +15,14 @@ from .store import Store
 ROLE_STATES = {"queued": ("triage", "triaging"), "implementing": ("implementation", "implementing"),
                "reviewing": ("review", "reviewing"), "fixing": ("fix", "fixing")}
 ALLOWED = {
-    "queued": {"triaging", "cancelled", "needs-human"},
+    "queued": {"triaging", "paused", "cancelled", "needs-human"},
     "triaging": {"awaiting-approval", "needs-human", "paused", "cancelled", "queued"},
     "awaiting-approval": {"implementing", "paused", "cancelled", "needs-human", "queued"},
     "implementing": {"validating", "needs-human", "paused", "cancelled", "queued"},
-    "validating": {"reviewing", "needs-human", "cancelled", "queued"},
+    "validating": {"reviewing", "paused", "needs-human", "cancelled", "queued"},
     "reviewing": {"fixing", "ready-for-human", "needs-human", "paused", "cancelled", "queued"},
     "fixing": {"validating", "needs-human", "paused", "cancelled", "queued"},
-    "paused": {"implementing", "triaging", "reviewing", "fixing", "cancelled", "needs-human", "queued"},
+    "paused": {"awaiting-approval", "implementing", "triaging", "validating", "reviewing", "fixing", "cancelled", "needs-human", "queued"},
     "needs-human": {"queued", "cancelled"},
     "ready-for-human": {"completed", "needs-human", "cancelled", "queued"},
     "cancelled": set(), "completed": set(),
@@ -49,6 +49,15 @@ class Controller:
         if state != row["state"] and state not in ALLOWED[row["state"]]:
             raise ValueError(f"invalid transition {row['state']} -> {state}")
         return self.store.cas_workflow((row["repo"], row["issue_number"]), row["version"], state=state, **changes)
+
+    def _finish(self, row: dict[str, object], dispatch: Dispatch, state: str,
+                *, status: str = "finished", result: dict[str, object] | None = None,
+                **changes: object) -> None:
+        if state != row["state"] and state not in ALLOWED[row["state"]]:
+            raise ValueError(f"invalid transition {row['state']} -> {state}")
+        self.store.transition_dispatch(dispatch.id, dispatch.issue, row["version"], state, status,
+                                       json.dumps(result, sort_keys=True) if result is not None else None,
+                                       **changes)
 
     def handle(self, event: Event) -> None:
         self.store.record_event(event)
@@ -121,18 +130,26 @@ class Controller:
         if command == "pause":
             if row["state"] == "paused" or row["stop_requested"]:
                 return
+            if "paused" not in ALLOWED[row["state"]]:
+                return
             if active_here:
                 self.store.cas_workflow(event.issue, row["version"], stop_requested="pause", resume_state=row["state"])
-            elif row["state"] not in {"cancelled", "completed", "needs-human"}:
+            else:
                 self._move(row, "paused", resume_state=row["state"])
             return
-        if command == "resume" and row["state"] == "paused" and row["approval_revision"] == row["revision"]:
+        if command == "resume" and row["state"] == "paused":
+            stage = row["resume_state"]
+            if stage not in {"queued", "triaging", "awaiting-approval"} and row["approval_revision"] != row["revision"]:
+                return
             with self.store.connection() as db:
                 unknown = db.execute("SELECT 1 FROM usage WHERE repo=? AND issue_number=? AND status='unknown' LIMIT 1", event.issue).fetchone()
             if unknown or self.store.active_dispatch():
                 return
-            paused = [d for d in self.store.dispatches(event.issue) if self.store.dispatch_row(d.id)["status"] == "paused"]
+            paused = [d for d in self.store.dispatches(event.issue) if d.revision == row["revision"] and
+                      self.store.dispatch_row(d.id)["status"] == "paused"]
             if not paused:
+                if stage in ALLOWED["paused"]:
+                    self._move(row, str(stage), resume_state=None)
                 return
             dispatch = paused[-1]
             self.store.update_dispatch(dispatch.id, status="resuming")
@@ -194,7 +211,8 @@ class Controller:
             if action == "resume":
                 self.store.update_dispatch(dispatch_id, status="running")
                 workflow = self.store.workflow(dispatch.issue)
-                self._move(workflow, str(workflow["resume_state"]), resume_state=None, stop_requested=None)
+                if not workflow["stop_requested"] and workflow["revision"] == dispatch.revision:
+                    self._move(workflow, str(workflow["resume_state"]), resume_state=None)
                 return
             if action.startswith("stop_") and action != "stop_observe":
                 self._submit("stop_observe", dispatch)
@@ -287,14 +305,24 @@ class Controller:
                 self._confirm_stop(dispatch, row)
             return
         if self.clock() >= datetime.fromisoformat(dispatch.deadline):
-            self.store.update_dispatch(dispatch.id, status="failed")
-            self._settle_observation(dispatch, observation)
-            self._move(row, "needs-human", reason="run timed out")
+            if observation.status in {"running", "created", "paused"}:
+                self.store.cas_workflow(dispatch.issue, row["version"], stop_requested="limit-timeout")
+            elif observation.status == "finished":
+                self._settle_observation(dispatch, observation)
+                self._finish(row, dispatch, "needs-human", status="failed", reason="run timed out")
+            else:
+                self.budget.settle(dispatch.issue, dispatch.id, None)
+                self._finish(row, dispatch, "needs-human", status="uncertain", reason="remote status after deadline is uncertain")
             return
-        if observation.status in {"failed", "unknown", "missing"}:
-            self.store.update_dispatch(dispatch.id, status="failed")
+        if observation.status in {"unknown", "missing"}:
+            self.budget.settle(dispatch.issue, dispatch.id, None)
+            self._finish(row, dispatch, "needs-human", status="uncertain",
+                         reason=observation.error or observation.status)
+            return
+        if observation.status == "failed":
             self._settle_observation(dispatch, observation)
-            self._move(row, "needs-human", reason=observation.error or observation.status)
+            self._finish(row, dispatch, "needs-human", status="failed",
+                         reason=observation.error or observation.status)
             return
         if observation.status != "finished" and iterations >= self.config.max_iterations:
             self.store.cas_workflow(dispatch.issue, row["version"], stop_requested="limit-iterations")
@@ -304,20 +332,21 @@ class Controller:
         self._settle_observation(dispatch, observation)
         result = observation.result
         if not self._valid_result(dispatch, result):
-            self.store.update_dispatch(dispatch.id, status="failed")
-            self._move(row, "needs-human", reason="invalid role result")
+            self._finish(row, dispatch, "needs-human", status="failed", reason="invalid role result")
             return
-        self.store.update_dispatch(dispatch.id, status="finished", result_json=json.dumps(result, sort_keys=True))
         if dispatch.role == "triage":
-            self._move(row, "awaiting-approval", validation_profile=result["validation_profile"])
+            self._finish(row, dispatch, "awaiting-approval", result=result,
+                         validation_profile=result["validation_profile"])
         elif dispatch.role in {"implementation", "fix"}:
-            self._move(row, "validating")
+            self._finish(row, dispatch, "validating", result=result)
         elif result["verdict"] == "pass":
-            self._move(row, "ready-for-human")
+            self._finish(row, dispatch, "ready-for-human", result=result)
         elif row["review_cycles"] < self.config.max_fix_cycles:
-            self._move(row, "fixing", review_cycles=row["review_cycles"] + 1)
+            self._finish(row, dispatch, "fixing", result=result,
+                         review_cycles=row["review_cycles"] + 1)
         else:
-            self._move(row, "needs-human", reason="review correction exhausted")
+            self._finish(row, dispatch, "needs-human", result=result,
+                         reason="review correction exhausted")
 
     def _account_observation(self, dispatch: Dispatch, observation: RunObservation) -> int:
         row = self.store.dispatch_row(dispatch.id)

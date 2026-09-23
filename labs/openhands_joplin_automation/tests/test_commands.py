@@ -141,3 +141,76 @@ def test_permission_lookup_failure_rejects_approval(tmp_path):
     h.controller.permissions = lambda actor, repo: (_ for _ in ()).throw(RuntimeError("unavailable"))
     h.emit("command", body="/agent implement")
     assert h.store.workflow(("demo/joplin", 1))["approval_revision"] is None
+
+
+def test_cancel_during_resume_cannot_restore_implementation(tmp_path):
+    h = Harness(tmp_path)
+    h.run_to("implementing")
+    h.emit("command", body="/agent pause")
+    h.run_to("paused")
+    entered, release = ThreadEvent(), ThreadEvent()
+    original_resume = h.agent.resume
+
+    def slow_resume(dispatch):
+        entered.set()
+        assert release.wait(2)
+        original_resume(dispatch)
+
+    h.agent.resume = slow_resume
+    try:
+        h.emit("command", body="/agent resume")
+        assert entered.wait(1)
+        h.emit("command", body="/agent cancel")
+    finally:
+        release.set()
+    h.run_to("cancelled")
+    assert h.delivery.published == []
+    assert h.store.workflow(("demo/joplin", 1))["approval_revision"] == "r1"
+
+
+def test_pause_resume_awaiting_approval_restores_nonrunning_stage(tmp_path):
+    h = Harness(tmp_path)
+    h.run_to("awaiting-approval")
+    h.emit("command", body="/agent pause")
+    assert h.store.workflow(("demo/joplin", 1))["state"] == "paused"
+    h.emit("command", body="/agent resume")
+    assert h.store.workflow(("demo/joplin", 1))["state"] == "awaiting-approval"
+    h.emit("command", body="/agent implement")
+    h.run_to("implementing")
+
+
+def test_pause_resume_approved_stage_before_dispatch(tmp_path):
+    h = Harness(tmp_path)
+    h.run_to("awaiting-approval")
+    h.emit("command", body="/agent implement")
+    h.emit("command", body="/agent pause")
+    assert h.store.workflow(("demo/joplin", 1))["state"] == "paused"
+    h.emit("command", body="/agent resume")
+    h.run_to("implementing")
+
+
+def test_pause_ready_for_human_is_harmless(tmp_path):
+    h = Harness(tmp_path)
+    h.emit("issue")
+    row = h.store.workflow(("demo/joplin", 1))
+    h.store.cas_workflow(("demo/joplin", 1), row["version"], state="ready-for-human")
+    h.emit("command", body="/agent pause")
+    assert h.store.workflow(("demo/joplin", 1))["state"] == "ready-for-human"
+
+
+def test_paused_triage_can_resume_to_reach_approval(tmp_path):
+    h = Harness(tmp_path)
+    h.run_to("triaging")
+    for _ in range(100):
+        active = h.store.active_dispatch()
+        if active and active["status"] == "running":
+            break
+        h.controller.tick()
+        sleep(0.001)
+    else:
+        pytest.fail("triage did not start")
+    h.emit("command", body="/agent pause")
+    h.run_to("paused")
+    h.emit("command", body="/agent resume")
+    h.complete("triage", scope="note title", summary="scope", validation_profile="core")
+    h.run_to("awaiting-approval")

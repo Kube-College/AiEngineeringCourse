@@ -48,6 +48,14 @@ def test_lower_final_report_cannot_restore_budget(budget):
     assert budget.snapshot(issue)["actual_microusd"] == 200_000
 
 
+def test_reported_spend_above_estimate_consumes_allowance(budget):
+    issue = ("demo/joplin", 1)
+    assert budget.reserve(issue, "req-1", 100_000)
+    budget.observe_cumulative(issue, "req-1", 4_900_000)
+    assert not budget.reserve(issue, "req-2", 1_000_000)
+    assert budget.reserve(issue, "req-3", 100_000)
+
+
 def test_restart_and_revision_keep_issue_spend(budget):
     issue = ("demo/joplin", 1)
     budget.reserve(issue, "req-1", 1_000_000)
