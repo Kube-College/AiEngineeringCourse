@@ -1,12 +1,20 @@
 [project]
 name = "openhands-joplin-controller"
 version = "0.1.0"
-description = "Credential-free controller simulation for the Joplin lab"
-requires-python = ">=3.11,<3.14"
+description = "Durable OpenHands controller for the Joplin lab"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "typer>=0.27.2",
+]
+
+[project.optional-dependencies]
+runtime = [
+    "openhands-sdk==1.48.0",
+    "openhands-tools==1.48.0",
+    "openhands-workspace==1.48.0",
+    "openhands-agent-server==1.48.0",
 ]
 
 [project.scripts]

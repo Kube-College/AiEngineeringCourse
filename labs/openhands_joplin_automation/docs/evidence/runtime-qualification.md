@@ -1,0 +1,23 @@
+# OpenHands runtime qualification
+
+Date: 23 September 2026. Source release: [`v1.48.0`](https://github.com/OpenHands/software-agent-sdk/releases/tag/v1.48.0), commit [`481dfb3d7adf6355fc157390d293559092739089`](https://github.com/OpenHands/software-agent-sdk/commit/481dfb3d7adf6355fc157390d293559092739089). The local source checkout at that commit was inspected. The four Python packages are pinned to 1.48.0 in the optional `runtime` dependency set. The release requires Python 3.12 or newer.
+
+## Verified source contracts
+
+| Concern | Release source and callable contract |
+| --- | --- |
+| Example | [`02_convo_with_docker_sandboxed_server.py`](https://github.com/OpenHands/software-agent-sdk/blob/v1.48.0/examples/02_remote_agent_server/02_convo_with_docker_sandboxed_server.py) constructs `LLM(model, base_url, api_key)`, `Conversation(agent, workspace)`, then `send_message()` and `run()`. It reads `conversation_stats.get_combined_metrics().accumulated_cost` after completion. |
+| Route | [`LLM`](https://github.com/OpenHands/software-agent-sdk/blob/v1.48.0/openhands-sdk/openhands/sdk/llm/llm.py) accepts `model`, `base_url`, `api_key: str | SecretStr`, `num_retries`, and `max_output_tokens`. [`LLMProvider.from_model`](https://github.com/OpenHands/software-agent-sdk/blob/v1.48.0/openhands-sdk/openhands/sdk/llm/utils/litellm_provider.py) uses LiteLLM provider inference. [`openrouter.py`](https://github.com/OpenHands/software-agent-sdk/blob/v1.48.0/openhands-sdk/openhands/sdk/llm/utils/providers/openrouter.py) recognises `openrouter/<provider>/<model>`. This controller builds `openrouter/openai/gpt-5.6-terra` with the exact OpenRouter endpoint. Live routing remains unverified. |
+| Creation and recovery | [`RemoteConversation.create(workspace, request)` and `.attach(workspace, conversation_id)`](https://github.com/OpenHands/software-agent-sdk/blob/v1.48.0/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) create and attach. `StartConversationRequest.conversation_id` accepts a caller-provided UUID. The older `RemoteConversation(..., conversation_id=...)` constructor can create on a 404 and is unsuitable for uncertain recovery. |
+| Run and stop | [`RemoteConversation.run(blocking=True, poll_interval=1.0, timeout=3600.0)`, `.pause()`, `.interrupt()`](https://github.com/OpenHands/software-agent-sdk/blob/v1.48.0/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) act on a server conversation. The request has `max_iterations`. A timeout or lost HTTP response needs observation before any state transition. |
+| Docker | [`DockerWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/v1.48.0/openhands-workspace/openhands/workspace/docker/workspace.py) automatically creates a container, publishes `host_port:8000` without a loopback host restriction, clears `api_key`, and removes the container on cleanup. The controller must create and label its own authenticated loopback container, persist storage, and use `RemoteWorkspace(host, api_key, working_dir)` for SDK access. |
+| Requests | [`LLM.num_retries`](https://github.com/OpenHands/software-agent-sdk/blob/v1.48.0/openhands-sdk/openhands/sdk/llm/llm.py) defaults to five. The model call is executed inside Agent Server. The exposed callback reports telemetry after a request begins; it is not a controller-side durable reservation hook. The controller sets `num_retries=0` and must place a budget gate at the HTTP boundary before live execution. |
+| Agent Server authentication | [`SESSION_API_KEY`](https://github.com/OpenHands/software-agent-sdk/blob/v1.48.0/openhands-agent-server/openhands/agent_server/README.md) enables server authentication. [`RemoteWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/v1.48.0/openhands-sdk/openhands/sdk/workspace/remote/remote_workspace_mixin.py) sends `X-Session-API-Key`. |
+
+OpenRouter lists [`openai/gpt-5.6-terra`](https://openrouter.ai/openai/gpt-5.6-terra) at US$2 per million input tokens and US$12 per million output tokens on 23 September 2026. Billing has not been tested.
+
+## Local evidence
+
+- Credential-free route tests construct the exact SDK arguments and verify secret redaction.
+- The `--smoke` script checks for model access and a pinned image digest before any runtime call. The process environment and lab `.env` currently contain no OpenRouter key. The sandbox cannot reach the Docker daemon. No model request, container creation, tool execution, usage observation, image digest, or restart test has been performed.
+- Live execution remains disabled. A successful package resolution and deterministic test suite do not qualify the model route, per-request gate, workspace persistence, or cancellation.
