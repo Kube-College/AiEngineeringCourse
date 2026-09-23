@@ -1,0 +1,9 @@
+{
+  "joplin_sha": "1d6beb0443e6d958b2c241f45978bd5de069f309",
+  "agent_server_version": "1.48.0",
+  "base_image_digest": "ghcr.io/openhands/agent-server@sha256:44426bffabffa704b54a79cfeae71d0af5e702e80ef1b7276861307ecc9d598c",
+  "python_version": "3.13.5",
+  "node_version": "24.21.0",
+  "package_manager": "yarn@4.16.0",
+  "built_image_digest": "sha256:eb3a8f1b239ef7e2b4d6859bbc8a8f6c42fa981abc751a67f6af9670aa71e5af"
+}
