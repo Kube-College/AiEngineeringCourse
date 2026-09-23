@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS dispatches (
   revision TEXT NOT NULL, role TEXT NOT NULL, attempt INTEGER NOT NULL,
   workspace_id TEXT NOT NULL, conversation_id TEXT, candidate_sha TEXT,
   deadline TEXT NOT NULL, status TEXT NOT NULL, request_hash TEXT,
-  result_json TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  result_json TEXT, iterations INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(repo, issue_number) REFERENCES workflows(repo, issue_number),
   UNIQUE(repo, issue_number, revision, role, attempt)
 );
@@ -37,6 +38,11 @@ CREATE TABLE IF NOT EXISTS usage (
   dispatch_id TEXT, reserved_microusd INTEGER NOT NULL,
   actual_microusd INTEGER, status TEXT NOT NULL, reported_microusd INTEGER,
   PRIMARY KEY(repo, issue_number, request_id),
+  FOREIGN KEY(repo, issue_number) REFERENCES workflows(repo, issue_number)
+);
+CREATE TABLE IF NOT EXISTS budget_increases (
+  event_id TEXT PRIMARY KEY, repo TEXT NOT NULL, issue_number INTEGER NOT NULL,
+  total_microusd INTEGER NOT NULL,
   FOREIGN KEY(repo, issue_number) REFERENCES workflows(repo, issue_number)
 );
 CREATE TABLE IF NOT EXISTS validations (

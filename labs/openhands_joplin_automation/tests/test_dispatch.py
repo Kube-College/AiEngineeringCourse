@@ -192,6 +192,8 @@ def test_simulated_validation_and_review_handoff(tmp_path):
     h.complete("implementation", summary="changed title logic", changed_paths=["packages/lib/models/Note.ts"])
     h.run_to("reviewing")
     assert len(h.delivery.published) == 1
+    implementation = next(d for d in h.store.dispatches(("demo/joplin", 1)) if d.role == "implementation")
+    assert h.store.workflow(("demo/joplin", 1))["candidate_sha"] == f"sha-{implementation.id}"
     for _ in range(50):
         h.controller.tick()
         sleep(0.001)

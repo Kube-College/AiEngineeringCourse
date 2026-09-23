@@ -14,6 +14,10 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
             db.executescript(files("openhands_controller").joinpath("schema.sql").read_text())
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(dispatches)")}
+        if "iterations" not in columns:
+            with self.transaction() as db:
+                db.execute("ALTER TABLE dispatches ADD COLUMN iterations INTEGER NOT NULL DEFAULT 0")
 
     @contextmanager
     def connection(self):
@@ -51,6 +55,17 @@ class Store:
                  json.dumps(event.payload, sort_keys=True, allow_nan=False), canonical),
             )
             return True
+
+    def event_outcome(self, event_id: str) -> str:
+        with self.connection() as db:
+            row = db.execute("SELECT outcome FROM events WHERE event_id=?", (event_id,)).fetchone()
+            if not row:
+                raise KeyError(event_id)
+            return row["outcome"]
+
+    def mark_event_processed(self, event_id: str) -> None:
+        with self.transaction() as db:
+            db.execute("UPDATE events SET outcome='processed' WHERE event_id=?", (event_id,))
 
     def create_workflow(self, issue: IssueKey, revision: str, *, title: str = "", body: str = "", budget_limit: int = 5_000_000) -> bool:
         with self.transaction() as db:
@@ -93,7 +108,7 @@ class Store:
 
     def dispatches(self, issue: IssueKey) -> list[Dispatch]:
         with self.connection() as db:
-            rows = db.execute("SELECT * FROM dispatches WHERE repo=? AND issue_number=? ORDER BY created_at, id", issue).fetchall()
+            rows = db.execute("SELECT * FROM dispatches WHERE repo=? AND issue_number=? ORDER BY rowid", issue).fetchall()
         return [Dispatch(id=r["id"], issue=(r["repo"], r["issue_number"]), revision=r["revision"],
                          role=r["role"], attempt=r["attempt"], workspace_id=r["workspace_id"],
                          conversation_id=r["conversation_id"], candidate_sha=r["candidate_sha"],
@@ -107,7 +122,7 @@ class Store:
             return dict(row)
 
     def update_dispatch(self, dispatch_id: str, **changes: object) -> None:
-        allowed = {"status", "conversation_id", "candidate_sha", "result_json", "request_hash"}
+        allowed = {"status", "conversation_id", "candidate_sha", "result_json", "request_hash", "iterations"}
         if not changes or set(changes) - allowed:
             raise ValueError("invalid dispatch update")
         assignments = ", ".join(f"{name}=?" for name in changes)

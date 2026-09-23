@@ -35,15 +35,16 @@ class FakeDelivery:
 
 
 class Harness:
-    def __init__(self, root, fault=None):
+    def __init__(self, root, fault=None, config=None):
         self.root = root
         self.fault = fault
         self.store = Store(root / "state.sqlite")
         self.revision = "r1"
         self.clock = FakeClock()
+        self.config = config
         self.agent = SimulatedAgent(fault)
         self.delivery = FakeDelivery()
-        self.controller = Controller(self.store, self.agent, self.delivery, lambda actor, repo: "write", self.clock)
+        self.controller = Controller(self.store, self.agent, self.delivery, lambda actor, repo: "write", self.clock, config)
         self.next_event = 0
 
     def issue(self, **payload):
@@ -56,7 +57,7 @@ class Harness:
     def restart(self):
         self.controller.close()
         self.store = Store(self.root / "state.sqlite")
-        self.controller = Controller(self.store, self.agent, self.delivery, lambda actor, repo: "write", self.clock)
+        self.controller = Controller(self.store, self.agent, self.delivery, lambda actor, repo: "write", self.clock, self.config)
 
     def emit(self, kind, **payload):
         self.next_event += 1
@@ -66,8 +67,17 @@ class Harness:
         return event
 
     def complete(self, role, **result):
-        dispatches = self.store.dispatches(("demo/joplin", 1))
-        dispatch = next(d for d in reversed(dispatches) if d.role == role)
+        for _ in range(200):
+            dispatches = self.store.dispatches(("demo/joplin", 1))
+            matching = [d for d in dispatches if d.role == role and
+                        self.store.dispatch_row(d.id)["status"] in {"intent", "retryable", "created", "running"}]
+            if matching:
+                break
+            self.controller.tick()
+            sleep(0.001)
+        else:
+            raise AssertionError(f"dispatch for {role} was not created")
+        dispatch = matching[-1]
         for _ in range(200):
             if self.store.dispatch_row(dispatch.id)["status"] == "running":
                 break

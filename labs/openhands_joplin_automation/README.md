@@ -12,9 +12,10 @@ pull request.
 ## Current state
 
 The local development branch, design, and implementation plans are established.
-The controller has a credential-free SQLite simulation. The OpenHands adapter,
-container image, and live demo are planned work. Keep this work local while it
-is WIP.
+The controller has a credential-free SQLite simulation of issue intake,
+triage, approval, implementation, validation, review, cancellation, restart,
+and budget handoff. The OpenHands adapter, container image, and live demo are
+planned work. Keep this work local while it is WIP.
 
 See [the design spec](docs/2026-09-23-openhands-design.md) for the agreed
 architecture, deployment choices, and acceptance criteria. The
@@ -36,9 +37,10 @@ From this directory, prepare local configuration:
 cp .env.example .env
 ```
 
-The template records proposed controller settings. Leave credentials empty
-until the live adapter is ready. The simulation uses no GitHub or model
-credentials. OpenHands packages will be pinned after SDK qualification.
+The template records proposed settings for later live integration. Plan 01
+simulations do not read it. Leave credentials empty until the live adapter is
+ready. The simulation uses no GitHub or model credentials. OpenHands packages
+will be pinned after SDK qualification.
 
 Run the persisted storage example from this lab directory:
 
@@ -51,6 +53,25 @@ The first command records a queued demo issue in SQLite and prints its state.
 Repeating the command reopens the same state without creating another event.
 The lab uses its own `pyproject.toml` and `uv.lock`; it does not modify the
 parent Python project.
+
+Run each complete scenario with a separate state directory:
+
+```sh
+rtk proxy uv run controller simulate --state-dir .data/happy --scenario happy
+rtk proxy uv run controller simulate --state-dir .data/duplicate --scenario duplicate
+rtk proxy uv run controller simulate --state-dir .data/restart --scenario restart
+rtk proxy uv run controller simulate --state-dir .data/budget --scenario budget
+rtk proxy uv run controller simulate --state-dir .data/cancel --scenario cancel
+rtk proxy uv run pytest tests/test_store.py tests/test_dispatch.py tests/test_commands.py tests/test_budget.py tests/test_simulation.py -q
+```
+
+The command prints the persisted workflow and budget snapshot. `happy`,
+`duplicate`, and `restart` reach `ready-for-human` with a fake draft URL.
+`budget` reaches `needs-human`; `cancel` reaches `cancelled`. The fake delivery
+does not call GitHub, Git, OpenHands, or a model provider. The US$5 issue cap
+and run limits follow the [approved design](docs/2026-09-23-openhands-design.md).
+Existing simulation databases receive the additive iteration-accounting
+column when reopened.
 
 ## Target repository
 

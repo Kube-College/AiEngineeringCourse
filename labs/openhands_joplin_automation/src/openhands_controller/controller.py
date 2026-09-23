@@ -1,11 +1,13 @@
 import json
-import sqlite3
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Callable
 
 from .contracts import AgentAdapter, CreateNotSent, Delivery, Dispatch, Event, RunObservation
 from .commands import parse_command
+from .budget import Budget
+from .config import Config
 from .scheduler import SchedulerLock
 from .store import Store
 
@@ -29,9 +31,12 @@ ALLOWED = {
 
 class Controller:
     def __init__(self, store: Store, agent: AgentAdapter, delivery: Delivery,
-                 permissions: Callable[[str, str], str], clock: Callable[[], datetime]):
+                 permissions: Callable[[str, str], str], clock: Callable[[], datetime],
+                 config: Config | None = None):
         self.store, self.agent, self.delivery = store, agent, delivery
         self.permissions, self.clock = permissions, clock
+        self.config = config or Config()
+        self.budget = Budget(store)
         self._lock = SchedulerLock(store.path.parent)
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-adapter")
         self._pending: tuple[str, str, Future] | None = None
@@ -46,12 +51,18 @@ class Controller:
         return self.store.cas_workflow((row["repo"], row["issue_number"]), row["version"], state=state, **changes)
 
     def handle(self, event: Event) -> None:
-        if not self.store.record_event(event):
+        self.store.record_event(event)
+        if self.store.event_outcome(event.id) == "processed":
             return
+        self._apply_event(event)
+        self.store.mark_event_processed(event.id)
+
+    def _apply_event(self, event: Event) -> None:
         if event.kind == "issue":
             title = str(event.payload.get("title", ""))
             body = str(event.payload.get("body", ""))
-            if self.store.create_workflow(event.issue, event.revision, title=title, body=body):
+            if self.store.create_workflow(event.issue, event.revision, title=title, body=body,
+                                          budget_limit=self.config.issue_budget_microusd):
                 return
             row = self.store.workflow(event.issue)
             if row["revision"] != event.revision:
@@ -83,6 +94,18 @@ class Controller:
         row = self.store.workflow(event.issue)
         active = self.store.active_dispatch()
         active_here = active and (active["repo"], active["issue_number"]) == event.issue
+        if command == "budget":
+            try:
+                amount = Decimal(argument)
+                if not amount.is_finite() or amount <= 0:
+                    return
+                micro = amount * 1_000_000
+                if micro != micro.to_integral_value():
+                    return
+                self.budget.increase(event.issue, int(micro), event.id)
+            except (InvalidOperation, ValueError, TypeError):
+                return
+            return
         if command == "implement":
             if row["state"] == "awaiting-approval":
                 self._move(row, "implementing", approval_revision=row["revision"], stop_requested=None)
@@ -121,9 +144,12 @@ class Controller:
         attempts = [d for d in self.store.dispatches(issue) if d.revision == row["revision"] and d.role == role]
         attempt = len(attempts) + 1
         dispatch_id = f"{issue[0].replace('/', '-')}-{issue[1]}-{row['revision']}-{role}-{attempt}"
+        if not self.budget.reserve(issue, dispatch_id, self.config.dispatch_estimate_microusd):
+            self._move(row, "needs-human", reason="budget exhausted or unknown")
+            return
         dispatch = Dispatch(dispatch_id, issue, row["revision"], role, attempt,
                             f"workspace-{issue[1]}", None, row["candidate_sha"],
-                            (self.clock() + timedelta(minutes=20)).isoformat())
+                            (self.clock() + timedelta(seconds=self.config.timeout_seconds)).isoformat())
         self.store.create_dispatch(dispatch)
         if role == "triage":
             row = self._move(row, "triaging")
@@ -154,6 +180,7 @@ class Controller:
                 raise
             except Exception as exc:
                 self.store.update_dispatch(dispatch_id, status="uncertain")
+                self.budget.settle((row["repo"], row["issue_number"]), dispatch_id, None)
                 workflow = self.store.workflow((row["repo"], row["issue_number"]))
                 self._move(workflow, "needs-human", reason=f"uncertain {action}: {exc}")
                 raise
@@ -175,6 +202,8 @@ class Controller:
             if action == "stop_observe":
                 workflow = self.store.workflow(dispatch.issue)
                 if value.status in {"paused", "failed", "finished", "missing"}:
+                    if workflow["stop_requested"] != "pause":
+                        self._settle_observation(dispatch, value)
                     self._confirm_stop(dispatch, workflow)
                 return
             if action == "reconcile":
@@ -195,9 +224,11 @@ class Controller:
             dispatch = self._as_dispatch(active)
             status = active["status"]
             workflow = self.store.workflow(dispatch.issue)
+            if status == "running" and self.clock() >= datetime.fromisoformat(dispatch.deadline) and not workflow["stop_requested"]:
+                workflow = self.store.cas_workflow(dispatch.issue, workflow["version"], stop_requested="limit-timeout")
             if workflow["stop_requested"] and status in {"created", "running", "resuming"}:
                 self.store.update_dispatch(dispatch.id, status="stopping")
-                self._submit(f"stop_{workflow['stop_requested']}", dispatch)
+                self._submit("stop_cancel" if str(workflow["stop_requested"]).startswith("limit-") else f"stop_{workflow['stop_requested']}", dispatch)
             elif status == "stopping":
                 self._submit("stop_observe", dispatch)
             elif status == "resuming":
@@ -237,6 +268,9 @@ class Controller:
         elif request == "pause":
             self.store.update_dispatch(dispatch.id, status="paused")
             self._move(row, "paused", stop_requested=None)
+        elif request in {"limit-timeout", "limit-iterations"}:
+            self.store.update_dispatch(dispatch.id, status="failed")
+            self._move(row, "needs-human", stop_requested=None, reason=request.removeprefix("limit-"))
 
     @staticmethod
     def _as_dispatch(row: dict[str, object]) -> Dispatch:
@@ -246,20 +280,28 @@ class Controller:
 
     def _observed(self, dispatch: Dispatch, observation: RunObservation) -> None:
         row = self.store.workflow(dispatch.issue)
+        iterations = self._account_observation(dispatch, observation)
         if row["revision"] != dispatch.revision or row["stop_requested"]:
             if observation.status == "finished":
+                self._settle_observation(dispatch, observation)
                 self._confirm_stop(dispatch, row)
             return
         if self.clock() >= datetime.fromisoformat(dispatch.deadline):
             self.store.update_dispatch(dispatch.id, status="failed")
+            self._settle_observation(dispatch, observation)
             self._move(row, "needs-human", reason="run timed out")
             return
         if observation.status in {"failed", "unknown", "missing"}:
             self.store.update_dispatch(dispatch.id, status="failed")
+            self._settle_observation(dispatch, observation)
             self._move(row, "needs-human", reason=observation.error or observation.status)
+            return
+        if observation.status != "finished" and iterations >= self.config.max_iterations:
+            self.store.cas_workflow(dispatch.issue, row["version"], stop_requested="limit-iterations")
             return
         if observation.status != "finished":
             return
+        self._settle_observation(dispatch, observation)
         result = observation.result
         if not self._valid_result(dispatch, result):
             self.store.update_dispatch(dispatch.id, status="failed")
@@ -272,10 +314,31 @@ class Controller:
             self._move(row, "validating")
         elif result["verdict"] == "pass":
             self._move(row, "ready-for-human")
-        elif row["review_cycles"] < 1:
+        elif row["review_cycles"] < self.config.max_fix_cycles:
             self._move(row, "fixing", review_cycles=row["review_cycles"] + 1)
         else:
             self._move(row, "needs-human", reason="review correction exhausted")
+
+    def _account_observation(self, dispatch: Dispatch, observation: RunObservation) -> int:
+        row = self.store.dispatch_row(dispatch.id)
+        iterations = int(row["iterations"])
+        for usage in observation.usage:
+            if usage.get("request_id") != dispatch.id:
+                continue
+            amount = usage.get("cumulative_microusd")
+            if type(amount) is int and amount >= 0:
+                self.budget.observe_cumulative(dispatch.issue, dispatch.id, amount)
+            count = usage.get("iterations")
+            if type(count) is int and count >= 0:
+                iterations = max(iterations, count)
+        if iterations != row["iterations"]:
+            self.store.update_dispatch(dispatch.id, iterations=iterations)
+        return iterations
+
+    def _settle_observation(self, dispatch: Dispatch, observation: RunObservation) -> None:
+        amounts = [usage.get("cumulative_microusd") for usage in observation.usage if usage.get("request_id") == dispatch.id]
+        actual = max(amounts) if amounts and all(type(value) is int and value >= 0 for value in amounts) else None
+        self.budget.settle(dispatch.issue, dispatch.id, actual)
 
     @staticmethod
     def _valid_result(dispatch: Dispatch, result: object) -> bool:

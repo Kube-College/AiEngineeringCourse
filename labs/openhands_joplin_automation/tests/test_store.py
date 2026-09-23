@@ -1,4 +1,6 @@
 from dataclasses import replace
+from importlib.resources import files
+import sqlite3
 
 import pytest
 
@@ -34,3 +36,20 @@ def test_workflow_survives_restart_and_stale_writer_is_rejected(tmp_path):
 def test_invalid_config_is_rejected(values):
     with pytest.raises(ValueError):
         Config.from_mapping(values)
+
+
+def test_direct_config_rejects_nonpositive_timeout():
+    with pytest.raises(ValueError):
+        Config(timeout_seconds=0)
+
+
+def test_existing_controller_database_gains_iteration_accounting(tmp_path):
+    path = tmp_path / "prior.sqlite"
+    older = files("openhands_controller").joinpath("schema.sql").read_text().replace(
+        "result_json TEXT, iterations INTEGER NOT NULL DEFAULT 0,", "result_json TEXT,")
+    with sqlite3.connect(path) as db:
+        db.executescript(older)
+    Store(path)
+    with sqlite3.connect(path) as db:
+        columns = [row[1] for row in db.execute("PRAGMA table_info(dispatches)")]
+    assert "iterations" in columns
