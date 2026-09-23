@@ -11,11 +11,11 @@ pull request.
 
 ## Current state
 
-The local development branch, design, and implementation plans are established.
-The controller has a credential-free SQLite simulation of issue intake,
-triage, approval, implementation, validation, review, cancellation, restart,
-and budget handoff. The OpenHands adapter, container image, and live demo are
-planned work. Keep this work local while it is WIP.
+The local branch has a credential-free SQLite lifecycle simulation, a qualified
+OpenHands runtime, and a pinned Joplin image and validation fixtures. A live
+triage runner can now watch new issues in a configured fork. It stops at the
+approval gate. GitHub command intake, implementation, draft PR delivery, and
+review remain later Plan 4 work. Keep this course work local while it is WIP.
 
 See [the design spec](docs/2026-09-23-openhands-design.md) for the agreed
 architecture, deployment choices, and acceptance criteria. The
@@ -39,9 +39,36 @@ cp .env.example .env
 
 The controller loads these keys through `Settings` in
 `src/openhands_controller/config.py`; unknown keys are rejected. The simulation
-reads the run limits and issue budget from it. Leave credentials empty until the
-live adapter is ready. The simulation uses no GitHub or model credentials. OpenHands packages
-will be pinned after SDK qualification.
+uses no GitHub or model credentials.
+
+## Watch a new issue trigger triage
+
+From this lab directory, set `AGENT_BACKEND=openhands`, `GH_REPO` to your fork
+(`lspinheiro/joplin` or its GitHub URL), `GH_TOKEN`, and `LLM_API_KEY` in the
+ignored `.env`. Set `GITHUB_WRITES_ENABLED=true` to let the controller create
+and update one status comment on each issue. With writes disabled, progress is
+visible in the terminal only. The token needs **Issues: Read and write** on the
+selected fork for status comments; polling alone needs read access.
+
+The pinned Joplin image identified by `docker/versions.json` must be present in
+Docker. Run:
+
+```sh
+make run
+```
+
+Once the terminal says it is watching your fork, manually create a new issue in
+that fork. The controller polls every 20 seconds by default. It logs `queued`,
+`triaging`, then `awaiting-approval` after a successful OpenHands result. A
+status comment shows the same progression when GitHub writes are enabled.
+Creating the issue triggers triage without an approval command. The runner
+does not consume `/agent implement` or approval labels yet.
+
+The first start records a durable watch start time and skips older issues. On
+restart it replays issues created since that time, using stable event IDs to
+avoid repeating triage. State and runtime authentication files remain under
+the ignored `STATE_DIR`; the workspace remains under `WORKSPACE_DIR`.
+Use Ctrl-C to stop the controller.
 
 Run the persisted storage example from this lab directory:
 

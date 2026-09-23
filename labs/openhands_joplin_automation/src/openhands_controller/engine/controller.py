@@ -45,10 +45,12 @@ STOPPED_STATE = {StopRequest.CANCEL: S.CANCELLED, StopRequest.PAUSE: S.PAUSED}
 class Controller:
     def __init__(self, store: Store, agent: AgentAdapter, delivery: Delivery,
                  permissions: Callable[[str, str], str], clock: Callable[[], datetime],
-                 settings: Settings | None = None):
+                 settings: Settings | None = None,
+                 workspace_id_for_issue: Callable[[IssueKey], str] | None = None):
         self.store, self.agent, self.delivery = store, agent, delivery
         self.permissions, self.clock = permissions, clock
         self.settings = settings or Settings()
+        self.workspace_id_for_issue = workspace_id_for_issue or (lambda issue: f"workspace-{issue[1]}")
         self.budget = Budget(store)
         self._lock = SchedulerLock(store.path.parent)
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-adapter")
@@ -283,7 +285,7 @@ class Controller:
             self._move(row, S.NEEDS_HUMAN, reason="budget exhausted or unknown")
             return
         dispatch = Dispatch(dispatch_id, issue, row.revision, role, attempt,
-                            f"workspace-{issue[1]}", None, row.candidate_sha,
+                            self.workspace_id_for_issue(issue), None, row.candidate_sha,
                             (self.clock() + timedelta(seconds=self.settings.run_timeout_seconds)).isoformat())
         self.store.create_dispatch(dispatch)
         if role == Role.TRIAGE:

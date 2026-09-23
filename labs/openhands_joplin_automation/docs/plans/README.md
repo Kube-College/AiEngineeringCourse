@@ -1,6 +1,9 @@
 # OpenHands demo implementation plans
 
-The design is approved for planning. These plans have not been executed.
+The design is approved. Plans 01–03 have local implementations. Plan 04 now has
+the new-issue-to-triage slice: GitHub issue polling, an OpenHands runner, a
+`make run` command, and optional status comments. Approval event intake,
+publication, review, and the full two-issue demonstration are still pending.
 The course checkout is `teaching/Agentic_AI_Course/public`, branch
 `codex/openhands-joplin-automation`. The lab root is
 `labs/openhands_joplin_automation`. Run lab commands from that directory.

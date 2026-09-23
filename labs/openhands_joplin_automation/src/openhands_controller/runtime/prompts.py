@@ -42,10 +42,14 @@ def role_prompt(role: Role | str, *, issue_title: str, issue_body: str,
         raise ValueError("review requires candidate SHA")
     schema = ROLE_RESULTS[selected].model_json_schema()
     review = f"Review candidate SHA {candidate_sha}. Inspect the diff and validation evidence. " if selected == Role.REVIEW else ""
+    workspace_rule = ("Inspect the pinned Joplin source at /opt/joplin as read-only. "
+                      "Do not implement or modify source during triage. "
+                      if selected == Role.TRIAGE else "Inspect and edit only the assigned workspace. ")
     return (
         f"Role: {selected.value}. Issue: {issue_title}\n{issue_body}\n"
         + review
-        + "Inspect and edit only the assigned workspace. The controller owns commits, validation and publication. "
+        + workspace_rule
+        + "The controller owns commits, validation and publication. "
           "Finish with a single JSON object matching this schema. Do not wrap it in Markdown.\n"
         + json.dumps(schema, sort_keys=True)
     )

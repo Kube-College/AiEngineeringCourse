@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     state_dir: Path = Path(".data")
     workspace_dir: Path = Path(".workspaces")
     poll_seconds: PositiveInt = 20
+    gateway_port: PositiveInt = 18301
     run_timeout_seconds: PositiveInt = 1200
     max_iterations: PositiveInt = 50
     issue_budget_usd: Annotated[Decimal, Field(gt=0, decimal_places=6)] = Decimal(5)

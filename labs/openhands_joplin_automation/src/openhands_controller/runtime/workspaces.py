@@ -142,6 +142,10 @@ class WorkspaceManager:
         digest = hashlib.sha256(f"{self.root}:{issue[0]}#{issue[1]}".encode()).hexdigest()[:20]
         return f"workspace-{digest}"
 
+    def identifier(self, issue: IssueKey) -> str:
+        """Return the durable workspace identity before the dispatch is persisted."""
+        return self._identifier(issue)
+
     def _image(self, digest: str) -> str:
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
             raise ValueError("full image digest required")
