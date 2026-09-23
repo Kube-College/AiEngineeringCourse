@@ -196,3 +196,36 @@ def test_sdk_transport_refuses_inactive_gateway(fixture):
                                clock=lambda: datetime.now(timezone.utc))
     with pytest.raises(CapabilityError, match="request gate"):
         adapter.create(dispatch)
+
+
+def test_sdk_create_queues_prompt_without_starting_model(fixture, monkeypatch):
+    sdk = pytest.importorskip("openhands.sdk")
+    from openhands.sdk.workspace import RemoteWorkspace
+
+    _, dispatch, _, _ = fixture
+    received = []
+
+    class Conversation:
+        id = "conversation-1"
+
+        def send_message(self, message):
+            received.append(("message", message))
+
+        def close(self):
+            pass
+
+    def create(_cls, _workspace, request, **_kwargs):
+        received.append(("initial", request.initial_message))
+        return Conversation()
+
+    monkeypatch.setattr(sdk.RemoteConversation, "create", classmethod(create))
+    gateway = type("Gateway", (), {"active": True, "port": 54321})()
+    transport = SDKTransport(settings=Settings(_env_file=None, llm_api_key="dummy"),
+                             workspace_factory=lambda _: RemoteWorkspace(host="http://127.0.0.1:8010",
+                                                                          api_key="local", working_dir="/workspace"),
+                             issue_details=lambda _: ("Title", "Body"), gateway=gateway,
+                             gateway_token="gateway-dummy")
+    transport.create(dispatch)
+    assert received[0] == ("initial", None)
+    assert received[1][0] == "message"
+    assert "Role: review" in received[1][1]

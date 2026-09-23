@@ -32,3 +32,4 @@ dev = ["pytest>=8,<10"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["live: requires an explicitly enabled local Docker and model qualification environment"]

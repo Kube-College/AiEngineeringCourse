@@ -24,3 +24,22 @@ def simulate(
     settings = Settings()
     path = (state_dir or settings.state_dir) / "controller.sqlite"
     typer.echo(json.dumps(run_scenario(path, scenario, settings), sort_keys=True))
+
+
+@app.command("qualify-runtime")
+def qualify_runtime(
+    image_digest: Annotated[str, typer.Option(help="Immutable Agent Server sha256 image digest.")],
+) -> None:
+    """Run the opt-in authenticated Docker and OpenRouter marker smoke."""
+    settings = Settings()
+    if not settings.llm_api_key.get_secret_value():
+        typer.echo("OpenRouter key unavailable; live smoke disabled")
+        raise typer.Exit(2)
+    from .adapters.openhands import CapabilityError, run_smoke
+
+    try:
+        outcome = run_smoke(settings, image_digest)
+    except CapabilityError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
+    raise typer.Exit(outcome)

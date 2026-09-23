@@ -19,8 +19,9 @@ OpenRouter lists [`openai/gpt-5.6-terra`](https://openrouter.ai/openai/gpt-5.6-t
 ## Local evidence
 
 - Credential-free route tests construct the exact SDK arguments and verify secret redaction.
-- The `--smoke` script checks for model access and a pinned image digest before any runtime call. The process environment and lab `.env` currently contain no OpenRouter key. The sandbox cannot reach the Docker daemon. No model request, container creation, tool execution, usage observation, image digest, or restart test has been performed.
-- Live execution remains disabled. A successful package resolution and deterministic test suite do not qualify the model route, per-request gate, workspace persistence, or cancellation.
+- The `--smoke` script checks for model access and a pinned image digest before any runtime call. The process environment and lab `.env` contain no OpenRouter key. No model request, provider billing, token usage, or agent-driven file edit has been observed.
+- Docker access was available outside the restricted sandbox. The pinned ARM64 Agent Server image `ghcr.io/openhands/agent-server@sha256:44426bffabffa704b54a79cfeae71d0af5e702e80ef1b7276861307ecc9d598c` was pulled and used in the lifecycle test. The digest identifies the image used locally; it does not qualify the model route.
+- Live execution remains disabled. The actual OpenRouter route, per-request cost settlement, model-driven tool use, and cancellation during a model request remain unqualified.
 
 ## Adapter qualification
 
@@ -28,4 +29,12 @@ The optional OpenHands 1.48 packages were installed through uv. A local construc
 
 The SDK exposes no durable host-side callback before each server-side model request. The adapter therefore uses an authenticated HTTP gateway as the request boundary. Each request reserves issue budget before forwarding. Provider usage settles the reservation. Ambiguous transport outcomes mark spend unknown and block the next request. The gateway rejects unsupported models, streaming, missing output caps, and oversized inputs. The SDK's own retry count is zero. A local HTTP test verified that an unauthorised request never reaches the provider double. The live container-to-host gateway path and actual OpenRouter response shape remain untested without credentials and Docker.
 
-The smoke script uses a disposable checkout volume, loopback-published authenticated Agent Server, pinned image digest, and a file marker assertion. It prints model, provider, image, conversation, marker and budget evidence only after a successful run. The current environment fails its key prerequisite before Docker or provider access. A separate live tiny-budget stop is pending.
+The smoke script uses a disposable checkout volume, loopback-published authenticated Agent Server, pinned image digest, and a file marker assertion. It prints model, provider, image, conversation, marker and budget evidence only after a successful run. The current environment fails its OpenRouter-key prerequisite before provider access. A separate live tiny-budget stop is pending.
+
+## Workspace lifecycle qualification
+
+The controller starts one labelled Agent Server container per issue on a loopback port. It mounts only that issue's saved `/workspace` directory. `SESSION_API_KEY` authenticates SDK calls. The server token stays in a mode-0600 host env file outside the container mount. The container receives no GitHub credentials, Docker socket, home directory, or course checkout. The controller records the image digest, base SHA, SDK version, schema version, container ID, storage path, and authentication hash in SQLite. Reattachment checks those values and Docker labels before using or removing a container.
+
+The pinned server's default 45-second conversation lease caused an immediate event lookup after container recreation to return 404 while the saved conversation record remained present. This lab gives each issue one deterministic container name and sets `OH_LEASE_TTL_SECONDS=0`, as the pinned server documents for single-instance deployments. The [live lifecycle test](../../tests/live/test_runtime_lifecycle.py) then passed on 23 September 2026 (`1 passed in 64.65s`): SDK create and pause, tool-written marker, controller restart, container recreation, paused conversation lookup, same marker contents, and one dispatch. The test used a dummy model key and asserted that the provider gateway was never called. It did not resume an agent run or exercise model billing. The preceding failed lease runs retained their test workspaces for investigation.
+
+The [workspace tests](../../tests/test_workspaces.py) cover stable identity, the single storage mount, loopback/auth settings, incompatible version and image rejection, container loss, forced stop, and retention. Failed and active workspaces are retained. Cleanup requires an owned completed workflow past the 24-hour retention window. Unknown remote state is handed to a human by the controller's existing dispatch test.

@@ -197,13 +197,15 @@ class SDKTransport:
     def create(self, dispatch: Dispatch) -> str:
         if not self.budget_gate_verified:
             raise CapabilityError("request gate is inactive")
-        from openhands.sdk import LLM, RemoteConversation, TextContent
-        from openhands.sdk.conversation.request import SendMessageRequest, StartConversationRequest
+        from openhands.sdk import LLM, RemoteConversation
+        from openhands.sdk.conversation.request import StartConversationRequest
         from openhands.sdk.workspace import LocalWorkspace
         from openhands.tools.preset.default import get_default_agent
 
         workspace = self._workspace(dispatch)
         title, body = self.issue_details(dispatch.issue)
+        prompt = role_prompt(dispatch.role, issue_title=title, issue_body=body,
+                             candidate_sha=dispatch.candidate_sha)
         config = build_gateway_llm_config(
             self.settings, f"http://host.docker.internal:{self.gateway.port}/api/v1", self.gateway_token,
         )
@@ -211,13 +213,11 @@ class SDKTransport:
             agent=get_default_agent(llm=LLM(**config), cli_mode=True),
             workspace=LocalWorkspace(working_dir=workspace.working_dir),
             conversation_id=self._id(dispatch),
-            initial_message=SendMessageRequest(content=[TextContent(text=role_prompt(
-                dispatch.role, issue_title=title, issue_body=body, candidate_sha=dispatch.candidate_sha,
-            ))], run=False),
             max_iterations=self.settings.max_iterations,
         )
         conversation = RemoteConversation.create(workspace, request, visualizer=None)
         try:
+            conversation.send_message(prompt)
             return str(conversation.id)
         finally:
             conversation.close()

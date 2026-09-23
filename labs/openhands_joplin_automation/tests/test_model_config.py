@@ -2,6 +2,8 @@ import pytest
 import subprocess
 import sys
 from pathlib import Path
+from typer.testing import CliRunner
+from openhands_controller.cli import app
 
 from openhands_controller.config import Settings
 from openhands_controller.runtime.prompts import build_gateway_llm_config, build_llm_config, role_prompt
@@ -54,3 +56,9 @@ def test_smoke_reports_missing_prerequisites_without_calling_model():
                             text=True, env={"PATH": "/usr/bin:/bin", "LLM_API_KEY": ""})
     assert result.returncode == 2
     assert "OpenRouter key" in result.stdout
+
+
+def test_runtime_qualification_command_fails_closed_without_key():
+    result = CliRunner().invoke(app, ["qualify-runtime", "--image-digest", "sha256:" + "a" * 64])
+    assert result.exit_code == 2
+    assert "OpenRouter key" in result.output

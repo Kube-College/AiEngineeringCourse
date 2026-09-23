@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY, repo TEXT NOT NULL, issue_number INTEGER NOT NULL,
   status TEXT NOT NULL, container_id TEXT, image_digest TEXT, storage_id TEXT,
   base_sha TEXT, completed_at TEXT,
+  schema_version INTEGER NOT NULL DEFAULT 1, sdk_version TEXT NOT NULL DEFAULT '1.48.0',
+  owned INTEGER NOT NULL DEFAULT 1, host_port INTEGER, auth_hash TEXT,
   FOREIGN KEY(repo, issue_number) REFERENCES workflows(repo, issue_number)
 );
 CREATE TABLE IF NOT EXISTS usage (

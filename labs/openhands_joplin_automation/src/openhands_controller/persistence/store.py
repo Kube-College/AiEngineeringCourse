@@ -31,6 +31,18 @@ class Store:
         if "iterations" not in columns:
             with self.transaction() as db:
                 db.execute("ALTER TABLE dispatches ADD COLUMN iterations INTEGER NOT NULL DEFAULT 0")
+        with self.connection() as db:
+            workspace_columns = {row["name"] for row in db.execute("PRAGMA table_info(workspaces)")}
+        for name, definition in {
+            "schema_version": "INTEGER NOT NULL DEFAULT 1",
+            "sdk_version": "TEXT NOT NULL DEFAULT '1.48.0'",
+            "owned": "INTEGER NOT NULL DEFAULT 1",
+            "host_port": "INTEGER",
+            "auth_hash": "TEXT",
+        }.items():
+            if name not in workspace_columns:
+                with self.transaction() as db:
+                    db.execute(f"ALTER TABLE workspaces ADD COLUMN {name} {definition}")
 
     @contextmanager
     def connection(self):
