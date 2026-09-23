@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from openhands_controller.config import Settings
-from openhands_controller.runtime.prompts import build_llm_config, role_prompt
+from openhands_controller.runtime.prompts import build_gateway_llm_config, build_llm_config, role_prompt
 
 
 def test_model_route_is_openrouter():
@@ -24,6 +24,19 @@ def test_model_route_rejects_missing_key_and_changed_provider():
     with pytest.raises(ValueError, match="OpenRouter model"):
         build_llm_config(Settings(_env_file=None, llm_api_key="dummy", llm_model="openai/gpt-5.6-terra",
                                   llm_base_url="https://api.openai.com/v1"))
+
+
+def test_live_sdk_config_routes_only_through_budget_gateway():
+    settings = Settings(_env_file=None, llm_api_key="real-provider-key")
+    config = build_gateway_llm_config(settings, "http://host.docker.internal:54321/api/v1", "gateway-key")
+    assert config["model"] == "openrouter/openai/gpt-5.6-terra"
+    assert config["base_url"] == "http://host.docker.internal:54321/api/v1"
+    assert config["api_key"].get_secret_value() == "gateway-key"
+    assert config["num_retries"] == 0
+    assert config["max_output_tokens"] == 4096
+    assert config["api_mode"] == "chat"
+    assert config["stream"] is False
+    assert "real-provider-key" not in repr(config)
 
 
 def test_review_prompt_is_tied_to_candidate_sha():

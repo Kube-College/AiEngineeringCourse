@@ -21,3 +21,11 @@ OpenRouter lists [`openai/gpt-5.6-terra`](https://openrouter.ai/openai/gpt-5.6-t
 - Credential-free route tests construct the exact SDK arguments and verify secret redaction.
 - The `--smoke` script checks for model access and a pinned image digest before any runtime call. The process environment and lab `.env` currently contain no OpenRouter key. The sandbox cannot reach the Docker daemon. No model request, container creation, tool execution, usage observation, image digest, or restart test has been performed.
 - Live execution remains disabled. A successful package resolution and deterministic test suite do not qualify the model route, per-request gate, workspace persistence, or cancellation.
+
+## Adapter qualification
+
+The optional OpenHands 1.48 packages were installed through uv. A local constructor check accepted `LLM(model="openrouter/openai/gpt-5.6-terra", base_url="http://host.docker.internal:54321/api/v1", num_retries=0, api_mode="chat")`. LiteLLM parsed that model as provider `openrouter`. `StartConversationRequest` accepted the typed agent, initial message, caller UUID, workspace, and 50-iteration limit. These checks made no model request.
+
+The SDK exposes no durable host-side callback before each server-side model request. The adapter therefore uses an authenticated HTTP gateway as the request boundary. Each request reserves issue budget before forwarding. Provider usage settles the reservation. Ambiguous transport outcomes mark spend unknown and block the next request. The gateway rejects unsupported models, streaming, missing output caps, and oversized inputs. The SDK's own retry count is zero. A local HTTP test verified that an unauthorised request never reaches the provider double. The live container-to-host gateway path and actual OpenRouter response shape remain untested without credentials and Docker.
+
+The smoke script uses a disposable checkout volume, loopback-published authenticated Agent Server, pinned image digest, and a file marker assertion. It prints model, provider, image, conversation, marker and budget evidence only after a successful run. The current environment fails its key prerequisite before Docker or provider access. A separate live tiny-budget stop is pending.

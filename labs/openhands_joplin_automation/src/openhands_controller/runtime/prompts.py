@@ -1,6 +1,7 @@
 """OpenHands model configuration and role contracts."""
 
 import json
+from pydantic import SecretStr
 
 from ..config import Settings
 from ..domain.results import ROLE_RESULTS
@@ -21,6 +22,16 @@ def build_llm_config(settings: Settings) -> dict[str, object]:
         "base_url": settings.llm_base_url,
         "num_retries": 0,
     }
+
+
+def build_gateway_llm_config(settings: Settings, gateway_base_url: str, gateway_token: str) -> dict[str, object]:
+    """Run the SDK through the budget gateway; keep the provider key on the host."""
+    config = build_llm_config(settings)
+    if not gateway_base_url.startswith("http://host.docker.internal:") or not gateway_token:
+        raise ValueError("authenticated Docker budget gateway is required")
+    config.update(base_url=gateway_base_url, api_key=SecretStr(gateway_token),
+                  num_retries=0, max_output_tokens=4096, api_mode="chat", stream=False)
+    return config
 
 
 def role_prompt(role: Role | str, *, issue_title: str, issue_body: str,

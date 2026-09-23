@@ -41,6 +41,17 @@ class Budget:
         with self.store.connection() as db:
             return _has_unknown(db, issue)
 
+    def can_start_request(self, issue: IssueKey) -> bool:
+        """Check whether any positive request reservation could be made."""
+        with self.store.connection() as db:
+            if _has_unknown(db, issue):
+                return False
+            spent = db.execute(
+                "SELECT COALESCE(SUM(CASE WHEN status='settled' THEN actual_microusd ELSE max(reserved_microusd, COALESCE(reported_microusd,0)) END),0) AS total FROM usage WHERE repo=? AND issue_number=?",
+                issue,
+            ).fetchone()["total"]
+            return spent < _limit(db, issue)
+
     @validate_call
     def reserve(self, issue: IssueKey, request_id: RequiredId, estimate: PositiveMicroUSD) -> bool:
         with self.store.transaction() as db:

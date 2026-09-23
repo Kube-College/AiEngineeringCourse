@@ -101,3 +101,15 @@ def test_authorised_budget_command_increases_total_without_resuming(tmp_path):
     h.emit("command", body="/agent budget 7.50")
     assert h.store.workflow(("demo/joplin", 1)).budget_limit == 7_500_000
     assert h.store.workflow(("demo/joplin", 1)).state == "queued"
+
+
+def test_per_request_adapter_does_not_double_count_dispatch_cost(tmp_path):
+    h = Harness(tmp_path)
+    h.agent.per_request_budget = True
+    try:
+        h.emit("issue")
+        h.complete("triage", scope="one file", summary="scope", validation_profile="core")
+        h.run_to("awaiting-approval")
+        assert Budget(h.store).snapshot(("demo/joplin", 1)).estimated_microusd == 0
+    finally:
+        h.close()

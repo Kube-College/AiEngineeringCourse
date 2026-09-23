@@ -212,7 +212,8 @@ class Controller:
             raise
         except Exception as exc:
             self.store.update_dispatch(record.id, status=D.UNCERTAIN)
-            self.budget.settle(record.issue, record.id, None)
+            if not getattr(self.agent, "per_request_budget", False):
+                self.budget.settle(record.issue, record.id, None)
             self._move(self.store.workflow(record.issue), S.NEEDS_HUMAN, reason=f"uncertain {action}: {exc}")
             raise
         dispatch = record.dispatch
@@ -276,7 +277,9 @@ class Controller:
         issue = row.issue
         attempt = 1 + sum(d.revision == row.revision and d.role == role for d in self.store.dispatches(issue))
         dispatch_id = f"{issue[0].replace('/', '-')}-{issue[1]}-{row.revision}-{role}-{attempt}"
-        if not self.budget.reserve(issue, dispatch_id, self.settings.dispatch_estimate_microusd):
+        budgeted = (self.budget.can_start_request(issue) if getattr(self.agent, "per_request_budget", False)
+                    else self.budget.reserve(issue, dispatch_id, self.settings.dispatch_estimate_microusd))
+        if not budgeted:
             self._move(row, S.NEEDS_HUMAN, reason="budget exhausted or unknown")
             return
         dispatch = Dispatch(dispatch_id, issue, row.revision, role, attempt,
@@ -318,12 +321,14 @@ class Controller:
                 self._settle_observation(dispatch, observation)
                 self._finish(row, dispatch, S.NEEDS_HUMAN, status=D.FAILED, reason="run timed out")
             else:
-                self.budget.settle(dispatch.issue, dispatch.id, None)
+                if not getattr(self.agent, "per_request_budget", False):
+                    self.budget.settle(dispatch.issue, dispatch.id, None)
                 self._finish(row, dispatch, S.NEEDS_HUMAN, status=D.UNCERTAIN,
                              reason="remote status after deadline is uncertain")
             return
         if status in {RunStatus.UNKNOWN, RunStatus.MISSING}:
-            self.budget.settle(dispatch.issue, dispatch.id, None)
+            if not getattr(self.agent, "per_request_budget", False):
+                self.budget.settle(dispatch.issue, dispatch.id, None)
             self._finish(row, dispatch, S.NEEDS_HUMAN, status=D.UNCERTAIN, reason=observation.error or status)
             return
         if status == RunStatus.FAILED:
@@ -354,7 +359,7 @@ class Controller:
     def _account_observation(self, record: DispatchRecord, observation: RunObservation) -> int:
         reports = observation.usage_for(record.id)
         for usage in reports:
-            if usage.cumulative_microusd is not None:
+            if usage.cumulative_microusd is not None and not getattr(self.agent, "per_request_budget", False):
                 self.budget.observe_cumulative(record.issue, record.id, usage.cumulative_microusd)
         iterations = max([record.iterations, *(u.iterations for u in reports if u.iterations is not None)])
         if iterations != record.iterations:
@@ -362,6 +367,8 @@ class Controller:
         return iterations
 
     def _settle_observation(self, dispatch: Dispatch, observation: RunObservation) -> None:
+        if getattr(self.agent, "per_request_budget", False):
+            return
         amounts = [usage.cumulative_microusd for usage in observation.usage_for(dispatch.id)]
         actual = max(amounts) if amounts and None not in amounts else None
         self.budget.settle(dispatch.issue, dispatch.id, actual)
