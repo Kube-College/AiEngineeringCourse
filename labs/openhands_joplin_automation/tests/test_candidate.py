@@ -59,6 +59,8 @@ def test_capture_rejects_unexpected_head(source):
 @pytest.mark.parametrize("path", [
     "packages/lib/models/Note.test.ts", ".gitmodules", ".git/hooks/pre-commit",
     "validation/profiles.json", "packages/app-desktop/integration-tests/desktop_16261.spec.ts",
+    "packages/lib/jest.config.js", "packages/lib/jest.setup.js",
+    "packages/lib/testing/test-utils.ts",
 ])
 def test_capture_rejects_trusted_or_hook_changes(source, path):
     root, base, capture = source
@@ -74,6 +76,19 @@ def test_capture_rejects_symlink_escape(source, tmp_path):
     (root / "packages/lib/escape.ts").symlink_to(tmp_path / "outside.ts")
     with pytest.raises(ValueError, match="symlink"):
         capture.capture_candidate("joplin", base)
+
+
+def test_capture_does_not_execute_agent_fsmonitor(source, tmp_path):
+    root, base, capture = source
+    (root / "packages/lib/markdownUtils.ts").write_text("candidate\n")
+    marker = tmp_path / "agent-monitor-ran"
+    monitor = tmp_path / "monitor.sh"
+    monitor.write_text(f"#!/bin/sh\ntouch '{marker}'\n")
+    monitor.chmod(0o755)
+    git(root, "config", "core.fsmonitor", str(monitor))
+
+    capture.capture_candidate("joplin", base)
+    assert not marker.exists()
 
 
 def test_capture_rejects_path_traversal(source):

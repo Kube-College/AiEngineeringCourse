@@ -29,15 +29,56 @@ def _paths(output: bytes) -> list[str]:
     return [os.fsdecode(part) for part in output.split(b"\0") if part]
 
 
+def _agent_head(root: Path) -> str:
+    """Read the agent's HEAD as data; never ask its Git configuration to resolve it."""
+    git_dir = root / ".git"
+    head_file = git_dir / "HEAD"
+    if git_dir.is_symlink() or not git_dir.is_dir() or head_file.is_symlink() or not head_file.is_file():
+        raise ValueError("workspace Git directory required")
+    head = head_file.read_text().strip()
+    if head.startswith("ref: "):
+        ref = head.removeprefix("ref: ")
+        pure = PurePosixPath(ref)
+        if not ref.startswith("refs/heads/") or ".." in pure.parts or "\\" in ref:
+            raise ValueError("workspace HEAD reference invalid")
+        ref_file = git_dir / ref
+        if ref_file.is_symlink() or not ref_file.is_file() or not ref_file.resolve().is_relative_to(git_dir.resolve()):
+            raise ValueError("workspace HEAD reference missing")
+        head = ref_file.read_text().strip()
+    if not SHA.fullmatch(head):
+        raise ValueError("workspace HEAD invalid")
+    return head
+
+
+def _trusted_worktree_git(baseline_repository: Path, worktree: Path, *argv: str) -> bytes:
+    """Compare agent files using only the controller's Git metadata and index."""
+    git_dir = baseline_repository / ".git"
+    if not git_dir.is_dir() or git_dir.is_symlink():
+        raise ValueError("trusted baseline Git directory required")
+    result = subprocess.run(
+        ["git", f"--git-dir={git_dir}", f"--work-tree={worktree}",
+         "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", *argv],
+        capture_output=True, timeout=60,
+        env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
+             "GIT_OPTIONAL_LOCKS": "0"},
+    )
+    if result.returncode:
+        raise ValueError(f"trusted worktree comparison failed: {result.stderr[:200]!r}")
+    return result.stdout
+
+
 def _supported(path: str) -> bool:
     pure = PurePosixPath(path)
     if path.startswith("/") or ".." in pure.parts or "\\" in path or "\n" in path:
         return False
     if not path.startswith(ALLOWED_ROOTS) or pure.suffix not in SOURCE_SUFFIXES:
         return False
-    if any(part in {"node_modules", "__tests__", "integration-tests"} for part in pure.parts):
+    if any(part.lower() in {"node_modules", "test", "tests", "testing", "__tests__",
+                            "__mocks__", "__fixtures__", "fixtures", "integration-tests"}
+           for part in pure.parts):
         return False
-    if pure.name.endswith((".test.ts", ".test.tsx", ".spec.ts", ".test.js", ".spec.js")):
+    if re.search(r"(^|[._-])(test|spec|config|setup|mock|fixture)([._-]|$)",
+                 pure.name, re.IGNORECASE):
         return False
     return True
 
@@ -69,20 +110,21 @@ class CandidateCapture:
         root = self.workspace_root / workspace_id
         if not root.is_dir() or root.is_symlink() or root.resolve().parent != self.workspace_root:
             raise ValueError("workspace checkout missing or outside root")
-        if not (root / ".git").is_dir():
-            raise ValueError("workspace Git directory required")
+        head = _agent_head(root)
         # An active hook can act when other tools operate on this checkout.
         hooks = root / ".git" / "hooks"
         if hooks.exists() and any(p.is_file() and not p.name.endswith(".sample") for p in hooks.iterdir()):
             raise ValueError("workspace hook changes are prohibited")
-        head = _git(root, "rev-parse", "HEAD").decode().strip()
         if head != base_sha:
             raise ValueError("workspace HEAD differs from pinned baseline")
         _git(self.baseline_repository, "cat-file", "-e", f"{base_sha}^{{commit}}")
+        if _git(self.baseline_repository, "rev-parse", "HEAD").decode().strip() != base_sha:
+            raise ValueError("trusted baseline HEAD differs from pinned baseline")
+        _git(self.baseline_repository, "diff", "--cached", "--quiet", base_sha)
         changed = set()
-        for argv in (("diff", "--no-renames", "--name-only", "-z", "HEAD"),
+        for argv in (("diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD"),
                      ("ls-files", "--others", "--exclude-standard", "-z")):
-            changed.update(_paths(_git(root, *argv)))
+            changed.update(_paths(_trusted_worktree_git(self.baseline_repository, root, *argv)))
         if not changed:
             raise ValueError("candidate has no changes")
         for name in changed:

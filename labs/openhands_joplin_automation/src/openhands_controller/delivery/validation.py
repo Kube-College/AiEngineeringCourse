@@ -1,6 +1,7 @@
 """Run only controller-owned checks in a disposable candidate checkout."""
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -50,6 +51,7 @@ class DockerValidationRunner:
                  "ls-files", "--others", "--exclude-standard", "-z"],
                 capture_output=True, timeout=30, check=True,
             ).stdout.split(b"\0")
+            created_parents: set[str] = set()
             for raw in sorted(set(changed + untracked)):
                 if not raw:
                     continue
@@ -57,6 +59,11 @@ class DockerValidationRunner:
                 source = checkout / name
                 if not source.is_file() or source.is_symlink() or not source.resolve().is_relative_to(checkout.resolve()):
                     raise ValueError(f"unsafe validation file: {name}")
+                parent = str((Path("/opt/joplin") / name).parent)
+                if parent not in created_parents:
+                    subprocess.run(["docker", "exec", container, "/bin/mkdir", "-p", "--", parent],
+                                   capture_output=True, timeout=30, check=True)
+                    created_parents.add(parent)
                 subprocess.run(["docker", "cp", str(source), f"{container}:/opt/joplin/{name}"],
                                capture_output=True, timeout=30, check=True)
             results = []
@@ -136,7 +143,21 @@ class CandidateValidator:
         passed = True
         with tempfile.TemporaryDirectory(prefix="joplin-validation-") as temporary:
             checkout = Path(temporary) / "joplin"
-            shutil.copytree(source, checkout, symlinks=False, ignore=shutil.ignore_patterns("node_modules"))
+            git_env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull,
+                       "GIT_CONFIG_SYSTEM": os.devnull, "GIT_LFS_SKIP_SMUDGE": "1"}
+            try:
+                subprocess.run(
+                    ["git", "-c", "core.hooksPath=/dev/null", "clone", "--no-hardlinks",
+                     "--no-checkout", "--", str(source), str(checkout)],
+                    capture_output=True, timeout=120, check=True, env=git_env,
+                )
+                subprocess.run(
+                    ["git", "-C", str(checkout), "-c", "core.hooksPath=/dev/null",
+                     "checkout", "--detach", candidate_sha],
+                    capture_output=True, timeout=120, check=True, env=git_env,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return finish(False, [{"kind": "checkout", "error": "exact candidate commit unavailable"}])
             for patch_name in patches:
                 if self.regression_root is None or Path(patch_name).name != patch_name:
                     raise ValueError("invalid trusted regression patch")
