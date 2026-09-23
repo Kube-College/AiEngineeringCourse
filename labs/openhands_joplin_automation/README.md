@@ -1,17 +1,17 @@
-# OpenHands Superset Automation
+# OpenHands Joplin Automation
 
 Work in progress. This directory will hold a functional demonstration of an
 always-on agent controller. Exercise instructions will be developed after the
 demonstration works.
 
 The controller receives events, records durable state, applies policy, and
-dispatches bounded OpenHands conversations. Apache Superset is the target
+dispatches bounded OpenHands conversations. Joplin is the target
 codebase. Human approval gates implementation, and a human merges the resulting
 pull request.
 
 ## Current state
 
-The local development branch and project brief are established. No controller,
+The local development branch, design, and implementation plans are established. No controller,
 OpenHands adapter, container image, or runnable demo has been implemented yet.
 Keep this work local while it is WIP.
 
@@ -20,13 +20,14 @@ architecture, deployment choices, and acceptance criteria. The
 [initial brief](docs/implementation-brief.md) records the earlier setup scope.
 
 The [implementation plans](docs/plans/README.md) split delivery into controller
-simulation, OpenHands runtime, Superset validation, and GitHub delivery. They
+simulation, OpenHands runtime, Joplin validation, and GitHub delivery. They
 include dependencies, shared interfaces, test cases, and completion gates.
 
 ## Local preparation
 
 Prerequisites for the planned demo are Git, uv, Docker with Compose, a disposable
-Superset checkout or fork, and access to a supported language model.
+Joplin checkout or fork, and OpenRouter access to GPT-5.6 Terra. The target
+checkout uses Yarn/TypeScript; the controller remains Python/uv.
 
 From this directory, prepare local configuration:
 
@@ -39,6 +40,14 @@ application yet. Leave credentials empty until the live adapter is ready.
 The first implementation slice will run a deterministic simulation without
 GitHub or model credentials. Python dependencies and OpenHands packages will be
 pinned after checking the selected SDK release and Docker workspace example.
+
+## Target repository
+
+The demo targets [Joplin](https://github.com/laurent22/joplin) at the pinned
+`dev` snapshot `1d6beb0443e6d958b2c241f45978bd5de069f309`.
+Candidate fixtures cover shared note-title logic (#16638) and desktop tag input
+(#16261). Both require reproduction before live demo execution. This replaces
+the previous Superset target.
 
 ## Sources
 

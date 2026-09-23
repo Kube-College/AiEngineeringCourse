@@ -6,7 +6,7 @@
 
 **Architecture:** Implement the provider-neutral adapter against a qualified pinned SDK release. Persist Docker workspace and conversation state independently and enforce limits at every model-request boundary.
 
-**Tech Stack:** Python with uv, SQLite, pytest, OpenHands SDK/Agent Server, Docker, GitHub REST, OpenRouter; Superset supplies its own Python and frontend toolchains.
+**Tech Stack:** Python with uv, SQLite, pytest, OpenHands SDK/Agent Server, Docker, GitHub REST, OpenRouter; Joplin uses TypeScript, Yarn workspaces, Jest, and Electron/Playwright.
 
 **Spec:** [Approved design](../2026-09-23-openhands-design.md). Read the [plan index and interface contracts](README.md) before executing.
 
@@ -20,9 +20,9 @@
 - Issue budget: US$5 across roles, retries, and the fix cycle; accrued cost survives revision changes.
 - Automatic fix cycles: one per issue revision. Human approval and merge are mandatory.
 - Completed workspace retention: 24 hours after workflow completion. Failed workspace retention: until explicit cleanup.
-- GitHub writes: disabled until a demo fork is configured; never target `apache/superset`.
-- Baseline: `c9fd9bf94f45163afd24f39f5ed9eec23a999150`; backend #44385, frontend #44466.
-- Use uv for controller Python. Derive target toolchains from the pinned Superset source.
+- GitHub writes: disabled until a demo fork is configured; never target `laurent22/joplin`.
+- Baseline: `1d6beb0443e6d958b2c241f45978bd5de069f309`; core #16638, desktop #16261.
+- Use uv for controller Python. Derive target toolchains from the pinned Joplin source.
 - All paths below are relative to the lab root. Run commands there, prefix shell commands with `rtk`, and stage only each task's audited files.
 - Every commit is local. End each task with its focused checks and an explicit-path commit.
 

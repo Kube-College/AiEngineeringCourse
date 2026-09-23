@@ -6,7 +6,7 @@
 
 **Architecture:** GitHub polling normalises actor-attributed events into the existing state machine. A controller-owned delivery adapter publishes only validated immutable commits and reconciles uncertain external outcomes.
 
-**Tech Stack:** Python with uv, SQLite, pytest, OpenHands SDK/Agent Server, Docker, GitHub REST, OpenRouter; Superset supplies its own Python and frontend toolchains.
+**Tech Stack:** Python with uv, SQLite, pytest, OpenHands SDK/Agent Server, Docker, GitHub REST, OpenRouter; Joplin uses TypeScript, Yarn workspaces, Jest, and Electron/Playwright.
 
 **Spec:** [Approved design](../2026-09-23-openhands-design.md). Read the [plan index and interface contracts](README.md) before executing.
 
@@ -20,9 +20,9 @@
 - Issue budget: US$5 across roles, retries, and the fix cycle; accrued cost survives revision changes.
 - Automatic fix cycles: one per issue revision. Human approval and merge are mandatory.
 - Completed workspace retention: 24 hours after workflow completion. Failed workspace retention: until explicit cleanup.
-- GitHub writes: disabled until a demo fork is configured; never target `apache/superset`.
-- Baseline: `c9fd9bf94f45163afd24f39f5ed9eec23a999150`; backend #44385, frontend #44466.
-- Use uv for controller Python. Derive target toolchains from the pinned Superset source.
+- GitHub writes: disabled until a demo fork is configured; never target `laurent22/joplin`.
+- Baseline: `1d6beb0443e6d958b2c241f45978bd5de069f309`; core #16638, desktop #16261.
+- Use uv for controller Python. Derive target toolchains from the pinned Joplin source.
 - All paths below are relative to the lab root. Run commands there, prefix shell commands with `rtk`, and stage only each task's audited files.
 - Every commit is local. End each task with its focused checks and an explicit-path commit.
 
@@ -99,7 +99,7 @@ def test_lost_pr_response_reconciles_existing_pr(publication_harness):
 
 - [ ] Run `rtk proxy uv run pytest tests/test_publication.py -q`.
 - [ ] Validate destination owner/name and enforce writes-enabled configuration.
-Reject upstream `apache/superset`, unexpected Git remotes, and credential-bearing
+Reject upstream `laurent22/joplin`, unexpected Git remotes, and credential-bearing
 URLs. Use controller-only credentials and disable hooks; never run tests in
 the publication process.
 - [ ] Persist branch-push and PR-create intent before external calls. Use
@@ -131,7 +131,7 @@ def test_review_of_old_head_cannot_release_issue(tmp_path):
     h.complete("review", candidate_sha="obsolete",
                verdict="pass", findings=[])
     h.controller.tick()
-    assert h.store.workflow(("demo/superset", 1))["state"] == "needs-human"
+    assert h.store.workflow(("demo/joplin", 1))["state"] == "needs-human"
 ```
 
 - [ ] Run `rtk proxy uv run pytest tests/test_review_cycle.py tests/test_workflow_completion.py -q`.
@@ -154,7 +154,7 @@ comments, merge observation replay, and cleanup after completion.
 
 **Interfaces:** `prepare_demo.py --repo OWNER/REPO --dry-run` previews fork issue
 setup; `--apply` performs idempotent issue creation after destination selection.
-`run_demo.py --scenario backend|frontend|recovery` drives the documented workflow
+`run_demo.py --scenario core|desktop|recovery` drives the documented workflow
 while preserving genuine human approval.
 
 - [ ] Write tests proving dry-run has no writes, upstream is refused, existing
@@ -162,7 +162,7 @@ fixture issues are reused, and partial setup can resume:
 
 ```python
 def test_demo_setup_dry_run_has_no_writes(demo_setup):
-    result = demo_setup.run(repo="demo/superset", apply=False)
+    result = demo_setup.run(repo="demo/joplin", apply=False)
     assert len(result.planned_issues) == 2
     assert demo_setup.github.write_calls == []
 ```
@@ -176,7 +176,7 @@ Commands must match the implemented CLI, not planned flags.
 checks only when external prerequisites are present.
 - [ ] Preview fixture setup for the explicitly selected fork, then apply it
 within user-authorised scope. Do not create a fork or upstream issue implicitly.
-- [ ] Execute backend and frontend separately with the US$5 issue cap.
+- [ ] Execute core and desktop separately with the US$5 issue cap.
 Capture base/candidate/image SHAs, commands and results, provider/model,
 actual/estimated costs, conversation IDs, draft PR URLs, and review outcomes.
 Attach each created PR to the current Codex task. Keep raw transcripts ignored.
@@ -184,7 +184,7 @@ Attach each created PR to the current Codex task. Keep raw transcripts ignored.
 pause/resume without duplicate dispatch or cost reset.
 - [ ] Record each outcome as completed fix, budget handoff, failed qualification,
 or missing prerequisite. Do not mark an unexecuted live case passing.
-- [ ] Commit `docs: document verified OpenHands Superset demo runs` locally.
+- [ ] Commit `docs: document verified OpenHands Joplin demo runs` locally.
 
 ## Completion gate
 

@@ -2,8 +2,8 @@
 
 The design is approved for planning. These plans have not been executed.
 The course checkout is `teaching/Agentic_AI_Course/public`, branch
-`codex/openhands-superset-automation`. The lab root is
-`labs/openhands_superset_automation`. Run lab commands from that directory.
+`codex/openhands-joplin-automation`. The lab root is
+`labs/openhands_joplin_automation`. Run lab commands from that directory.
 
 ## Delivery order
 
@@ -11,7 +11,7 @@ The course checkout is `teaching/Agentic_AI_Course/public`, branch
 | --- | --- | --- |
 | [01 Controller simulation](01-controller.md) | None | Restartable, credential-free workflow with approval, cancellation, and budget handoffs |
 | [02 OpenHands runtime](02-runtime.md) | 01 contracts | Qualified Docker execution with OpenRouter, persistent conversations, and enforced limits |
-| [03 Superset validation](03-superset.md) | 01 contracts; 02 image selection | Pinned dual-toolchain image and reproducible backend/frontend failing fixtures |
+| [03 Joplin validation](03-joplin.md) | 01 contracts; 02 image selection | Pinned Node/Electron image and reproducible core/desktop failing fixtures |
 | [04 GitHub delivery](04-delivery.md) | 01–03 | Authorised polling, exact-commit validation/publication, review/fix, and two documented demos |
 
 Complete 01 before integrating adapters. Read-only qualification for 02 and 03
@@ -115,7 +115,7 @@ Task 01.1 supplies `tests/support.py` with `Harness(root, fault=None)`.
 It exposes `controller`, `store`, `agent`, `delivery`, `clock`, and:
 `issue()`, `emit(kind, **payload)`, `complete(role, **result)`,
 `restart()`, and `run_to(state)`. It uses issue
-`("demo/superset", 1)`, actor `maintainer`, and revision `r1`.
+`("demo/joplin", 1)`, actor `maintainer`, and revision `r1`.
 `agent.created` lists dispatch IDs; `delivery.published` lists candidate SHAs.
 Fault injection raises at named persistence/external-call boundaries.
 `clock.advance(seconds)` makes timeout tests deterministic.
@@ -129,7 +129,7 @@ Never permit `run_to` to spin indefinitely; bound ticks and report observed stat
 | Authorisation, revisions, commands, pause/cancel | 01.3, 04.1 |
 | Usage, US$5, unknown spend, retry limits | 01.4, 02.2 |
 | Docker isolation, persistence, cancellation, cleanup | 02.1–02.3 |
-| Backend/frontend fixtures and trusted validation | 03.1–03.3 |
+| Core/desktop fixtures and trusted validation | 03.1–03.3 |
 | Git ownership and publication reconciliation | 04.2 |
 | Review at exact SHA and one fix cycle | 04.3 |
 | Polling, projection, optional signed webhook | 04.1 |

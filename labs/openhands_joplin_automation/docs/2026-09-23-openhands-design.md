@@ -1,12 +1,14 @@
-# OpenHands Superset automation design
+# OpenHands Joplin automation design
 
 Date: 23 September 2026. Status: approved for implementation planning;
-implementation has not started. See the [implementation plans](plans/README.md).
+implementation has not started. Retargeted to Joplin at the user's request on
+23 September 2026. This replaces the previous Superset baseline and issue pair.
+See the [implementation plans](plans/README.md).
 
 ## Purpose and scope
 
 Build a functional local demonstration of a durable controller dispatching
-bounded OpenHands agents against Apache Superset. Develop student exercises
+bounded OpenHands agents against Joplin. Develop student exercises
 after the demo works. Keep the course branch local during WIP.
 
 The accepted deployment is a local Python controller, Docker agent workspaces,
@@ -14,9 +16,9 @@ and GPT-5.6 Terra through OpenRouter. GitHub labels and comments provide the
 human interface. The controller owns Git operations, validation, and draft PR
 publication. A human owns merging.
 
-Support backend and frontend work with one active agent execution. Start with
+Support shared application logic and desktop UI work with one active agent execution. Start with
 the two upstream issues selected below. Multi-host operation, automatic merging,
-Agent Canvas, OpenHands Automation, local inference, and a full Superset browser
+Agent Canvas, OpenHands Automation, local inference, mobile builds, signed desktop releases, and a full Joplin UI
 test suite are outside the initial scope.
 
 ## Architecture
@@ -182,7 +184,7 @@ controller.
 Push only to an explicitly configured demo fork, using a deterministic branch.
 Persist publication intent first. After an uncertain push or PR creation, inspect
 the remote branch and existing PR before retrying. Unexpected remote head changes
-require human attention. Never publish to `apache/superset` automatically.
+require human attention. Never publish to `laurent22/joplin` automatically.
 
 ## Deployment configuration
 
@@ -212,10 +214,20 @@ selected OpenHands SDK's routing configuration during adapter qualification;
 the OpenRouter ID is not assumed to be the SDK's full routing string.
 
 Pin compatible SDK, tools, workspace, and Agent Server releases and the built
-container digest. Derive Superset Python, Node, package-manager versions, and
-dependency installation from the pinned source revision. Build an image with
-both toolchains. Host-managed controller execution is the initial supported
-deployment; containerising the controller is a later packaging change.
+container digest. Joplin uses Yarn workspaces and TypeScript. The pinned root
+metadata requires Node >=22.19; packageManager and yarnPath select Yarn 4.16.0,
+while engines.yarn still says 4.14.1. Use the committed Yarn 4.16.0 binary and
+verify installation before declaring compatibility. Select an exact Node patch
+version satisfying the source and Agent Server image constraints.
+
+Build a Linux image with OpenHands Python, Node, Yarn, native module build tools,
+and Electron runtime libraries. Derive system dependencies from devbox.json and
+CI. Run desktop UI checks under an isolated virtual display with a disposable
+Joplin profile. Mount no personal notebooks, sync credentials, or host display.
+Qualify architecture support on the local Docker host; do not assume Electron
+binaries or native modules work under emulation. Host-managed controller execution
+is the initial supported deployment; containerising the controller is a later
+packaging change.
 
 Track cost before and after each model request. Reserve estimated input/output
 allowance where supported, cap response size, and reconcile provider usage.
@@ -231,44 +243,51 @@ gate, iteration and timeout enforcement, usage accounting, and cancellation.
 If the selected SDK cannot expose a required gate, adapt its execution boundary
 or mark the live profile unsupported. Do not quietly weaken the contract.
 
-## Superset baseline and selected issues
+## Joplin baseline and candidate issues
 
-Use the accepted master snapshot
-[`c9fd9bf94f45163afd24f39f5ed9eec23a999150`](https://github.com/apache/superset/commit/c9fd9bf94f45163afd24f39f5ed9eec23a999150),
-resolved on 21 September 2026. It is a fixed baseline, not a moving `master`
-reference. The latest stable application release found during that investigation
-was [6.1.0](https://github.com/apache/superset/releases/tag/6.1.0).
+Use the current development snapshot
+[`1d6beb0443e6d958b2c241f45978bd5de069f309`](https://github.com/laurent22/joplin/commit/1d6beb0443e6d958b2c241f45978bd5de069f309),
+resolved from `dev` on 23 September 2026. It is an immutable source baseline,
+not a release tag or a moving branch reference.
 
-| Scope | Source issue | Required reproduction |
+| Scope | Candidate source issue | Required reproduction |
 | --- | --- | --- |
-| Backend | [#44385: stale contextual cache mappings after DELETE](https://github.com/apache/superset/issues/44385) | Create state with a tab context, delete it, create again, and verify a fresh key for dashboard filter state and Explore form data |
-| Frontend | [#44466: overlapping stacked-bar value labels](https://github.com/apache/superset/issues/44466) | Render small non-zero segments beside a large outlier; verify the agreed label-legibility behaviour for manual positions |
+| Shared application logic | [#16638: matched underscores disappear from note titles](https://github.com/laurent22/joplin/issues/16638) | Generate a note title from `YYYY_MM_DD`; preserve internal underscores while preserving intentional Markdown formatting removal |
+| Desktop UI | [#16261: cleared tag input still adds a suggested tag](https://github.com/laurent22/joplin/issues/16261) | Type a prefix of an existing tag, erase the whole input, press Enter, and verify no tag is added and the dialog closes |
 
-Both issues were open when checked on 21 September. The frontend issue already
-had [PR #44469](https://github.com/apache/superset/pull/44469), and the backend
-discussion included contributor interest. These are educational cases against
-a fixed snapshot. Do not claim they remain unclaimed or open indefinitely.
+Both were open and unassigned when checked on 23 September. Issue #16638 has
+a maintainer explanation of the title-filtering behaviour. Issue #16261 has a
+stale label and a link to a closed third-party fork PR. Neither observation
+establishes that the pinned source still exhibits the reported failure.
 
-Before accepting the fixtures, reproduce both failures and establish focused
-regression tests. Source issue claims and suggested patches remain unverified
-until this happens. Snapshot the relevant problem descriptions with attribution
-for local replay. Avoid supplying upstream solution patches to the implementation
-agent; use them separately for comparison. Fork-side issue creation is an
-explicit demo setup action after the destination is configured.
+These replace the previous Superset candidates. They remain provisional until
+qualification reproduces both failures on the pinned revision. Start the core
+investigation in `packages/lib/models/Note.ts` and its existing tests; locate the
+actual title-generation helper before adding coverage. Use `packages/app-desktop`
+for the tag-dialog interaction. The reports originate on macOS and Windows;
+qualify the shared behaviour in Linux Docker before selecting them for the demo.
+
+Snapshot concise problem descriptions with attribution for local replay. Exclude
+upstream proposed fixes from implementation-agent input. Fork-side issue creation
+is an explicit demo setup action after the destination is configured. No upstream
+issue comments or PRs are part of this demo.
 
 ## Validation and acceptance
 
 Use controller-owned validation profiles whose commands cannot be replaced by
-issue text or agent output. Backend work runs focused Python tests and applicable
-lint. Frontend work runs focused tests, applicable lint, and type checks. Changes
+issue text or agent output. Core work runs focused Joplin Jest tests,
+non-mutating ESLint, and TypeScript checks. Desktop work runs its focused Jest
+tests, type checks, and Electron
+Playwright interaction checks under a virtual display. Changes
 spanning both run both profiles. Record baseline failures separately and compare
 the exact candidate revision. Unsupported change scopes require human review.
 
 Capture commands, exit codes, logs, source SHA, and image digest. Test additions
 must fail on the pinned baseline and pass with the candidate fix. Preserve trusted
 regression checks outside agent-writable paths. Existing tests cannot be removed
-or weakened to obtain a pass. Frontend label behaviour also needs rendered chart
-evidence; a transformer assertion alone does not establish visual legibility.
+or weakened to obtain a pass. Desktop tag behaviour also needs an actual dialog
+interaction with persisted note-tag assertions. A screenshot alone does not
+establish the absence of a tag.
 
 Accept the controller when deterministic tests demonstrate duplicate delivery,
 actor checks, revision invalidation, crash recovery, stale-result rejection,
@@ -291,13 +310,17 @@ resolve release-specific details before enabling the live profile:
 - Select compatible pinned OpenHands versions and verify result schemas,
   conversation persistence, workspace reattachment, and cancellation APIs.
 - Verify OpenRouter model routing, tool calls, cost reporting, and SDK budget hooks.
-- Derive the dual-toolchain image and trusted test commands from the Superset SHA.
+- Derive the Node/Electron image and trusted test commands from the Joplin SHA.
 - Reproduce the two selected issues and measure whether their scope fits the budget.
 - Configure the destination fork and credentials locally. Missing destination
   configuration blocks publication while simulation remains available.
 
 ## References
 
+- [Joplin source](https://github.com/laurent22/joplin).
+- [Joplin build guide](https://joplinapp.org/help/dev/BUILD/).
+- [Pinned package metadata](https://github.com/laurent22/joplin/blob/1d6beb0443e6d958b2c241f45978bd5de069f309/package.json)
+  and [Yarn configuration](https://github.com/laurent22/joplin/blob/1d6beb0443e6d958b2c241f45978bd5de069f309/.yarnrc.yml).
 - [Original controller](https://github.com/lspinheiro/devin_superset_automation).
 - [OpenHands SDK](https://github.com/OpenHands/software-agent-sdk).
 - [Docker workspace example](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/02_convo_with_docker_sandboxed_server.py).

@@ -6,7 +6,7 @@
 
 **Architecture:** A synchronous state-machine core uses SQLite transactions and replaceable external adapters. A non-blocking scheduler observes external work; fake adapters reproduce recovery and failure cases.
 
-**Tech Stack:** Python with uv, SQLite, pytest, OpenHands SDK/Agent Server, Docker, GitHub REST, OpenRouter; Superset supplies its own Python and frontend toolchains.
+**Tech Stack:** Python with uv, SQLite, pytest, OpenHands SDK/Agent Server, Docker, GitHub REST, OpenRouter; Joplin uses TypeScript, Yarn workspaces, Jest, and Electron/Playwright.
 
 **Spec:** [Approved design](../2026-09-23-openhands-design.md). Read the [plan index and interface contracts](README.md) before executing.
 
@@ -20,9 +20,9 @@
 - Issue budget: US$5 across roles, retries, and the fix cycle; accrued cost survives revision changes.
 - Automatic fix cycles: one per issue revision. Human approval and merge are mandatory.
 - Completed workspace retention: 24 hours after workflow completion. Failed workspace retention: until explicit cleanup.
-- GitHub writes: disabled until a demo fork is configured; never target `apache/superset`.
-- Baseline: `c9fd9bf94f45163afd24f39f5ed9eec23a999150`; backend #44385, frontend #44466.
-- Use uv for controller Python. Derive target toolchains from the pinned Superset source.
+- GitHub writes: disabled until a demo fork is configured; never target `laurent22/joplin`.
+- Baseline: `1d6beb0443e6d958b2c241f45978bd5de069f309`; core #16638, desktop #16261.
+- Use uv for controller Python. Derive target toolchains from the pinned Joplin source.
 - All paths below are relative to the lab root. Run commands there, prefix shell commands with `rtk`, and stage only each task's audited files.
 - Every commit is local. End each task with its focused checks and an explicit-path commit.
 
@@ -95,7 +95,7 @@ def test_ambiguous_create_is_not_replayed(tmp_path):
     h.restart()
     h.controller.tick()
     assert h.agent.created == created
-    assert h.store.workflow(("demo/superset", 1))["state"] == "needs-human"
+    assert h.store.workflow(("demo/joplin", 1))["state"] == "needs-human"
 ```
 
 - [ ] Run `rtk proxy uv run pytest tests/test_dispatch.py -q` and record the failure.
@@ -129,7 +129,7 @@ def test_cancel_wins_over_finished_agent(tmp_path):
     h = Harness(tmp_path)
     h.run_to("implementing")
     h.emit("command", body="/agent cancel")
-    h.complete("implementation", summary="done", changed_paths=["superset/a.py"])
+    h.complete("implementation", summary="done", changed_paths=["packages/lib/models/Note.ts"])
     h.controller.tick()
     assert h.delivery.published == []
 
@@ -138,7 +138,7 @@ def test_issue_edit_revokes_approval(tmp_path):
     h.run_to("implementing")
     h.emit("issue", title="new scope", body="changed", revision="r2")
     h.emit("command", body="/agent resume")
-    assert h.store.workflow(("demo/superset", 1))["approval_revision"] is None
+    assert h.store.workflow(("demo/joplin", 1))["approval_revision"] is None
 ```
 
 - [ ] Run `rtk proxy uv run pytest tests/test_commands.py -q` and observe failure.
@@ -169,9 +169,9 @@ budget command rejection for negative/NaN/infinite amounts, restart, and revisio
 
 ```python
 def test_unknown_spend_blocks_next_call(budget):
-    assert budget.reserve(("demo/superset", 1), "req-1", 100_000)
-    budget.settle(("demo/superset", 1), "req-1", None)
-    assert not budget.reserve(("demo/superset", 1), "req-2", 100_000)
+    assert budget.reserve(("demo/joplin", 1), "req-1", 100_000)
+    budget.settle(("demo/joplin", 1), "req-1", None)
+    assert not budget.reserve(("demo/joplin", 1), "req-2", 100_000)
 ```
 
 The `budget` fixture constructs `Budget` with a temporary Store and US$5 cap.
