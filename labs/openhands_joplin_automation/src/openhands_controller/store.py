@@ -116,7 +116,7 @@ class Store:
 
     def active_dispatch(self) -> dict[str, object] | None:
         with self.connection() as db:
-            row = db.execute("SELECT * FROM dispatches WHERE status IN ('intent','created','running','uncertain','stopping') LIMIT 1").fetchone()
+            row = db.execute("SELECT * FROM dispatches WHERE status IN ('intent','retryable','created','running','uncertain','stopping') LIMIT 1").fetchone()
             return dict(row) if row else None
 
     def workflows(self) -> list[dict[str, object]]:

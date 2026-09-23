@@ -12,6 +12,10 @@ class VersionConflict(ValueError):
     """A workflow was changed by another writer."""
 
 
+class CreateNotSent(RuntimeError):
+    """An adapter can prove that no remote create request was transmitted."""
+
+
 @dataclass(frozen=True)
 class Event:
     id: str
