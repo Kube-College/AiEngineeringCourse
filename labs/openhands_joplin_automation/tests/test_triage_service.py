@@ -107,16 +107,43 @@ def test_live_service_loads_pinned_image_and_configured_fork(tmp_path):
 
 def test_run_loop_waits_for_github_rate_limit(monkeypatch):
     service = TriageService(None, None, None)
-    calls = []
+    calls, sleeps = [], []
+    now = [0]
 
-    def step():
-        calls.append("step")
+    def step(*, poll=True):
+        calls.append(poll)
         if len(calls) == 1:
             raise GitHubRateLimit(65)
-        raise KeyboardInterrupt
+        if len(calls) == 4:
+            raise KeyboardInterrupt
+
+    def advance(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
 
     monkeypatch.setattr(service, "step", step)
-    monkeypatch.setattr("openhands_controller.triage.time.sleep", calls.append)
+    monkeypatch.setattr("openhands_controller.triage.time.sleep", advance)
+    monkeypatch.setattr("openhands_controller.triage.time.monotonic", lambda: now[0])
     with pytest.raises(KeyboardInterrupt):
         service.run_forever(20)
-    assert calls == ["step", 65, "step"]
+    assert calls == [True, False, False, False]
+    assert sleeps == [1, 1, 1]
+
+
+def test_failed_github_poll_still_ticks_active_controller():
+    class FailedPoller:
+        def collect(self):
+            raise GitHubRateLimit(65)
+
+    class CountingController:
+        def __init__(self):
+            self.ticks = 0
+
+        def tick(self):
+            self.ticks += 1
+
+    controller = CountingController()
+    service = TriageService(controller, FailedPoller(), None)
+    with pytest.raises(GitHubRateLimit):
+        service.step()
+    assert controller.ticks == 1

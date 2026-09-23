@@ -10,7 +10,11 @@ import pytest
 from openhands_controller.github.client import GitHubClient, GitHubRateLimit
 from openhands_controller.github.polling import GitHubPoller
 from openhands_controller.github.projection import Projector
+from openhands_controller.adapters.simulated import SimulatedAgent
+from openhands_controller.config import Settings
+from openhands_controller.engine.controller import Controller
 from openhands_controller.persistence.store import Store
+from openhands_controller.triage import TriageOnlyDelivery
 
 
 NOW = datetime(2026, 9, 24, 0, 0, tzinfo=timezone.utc)
@@ -49,6 +53,25 @@ def test_issue_poller_ignores_existing_issues_and_prs_then_replays_new_issue(tmp
     assert api.since[0] == api.since[1]
     restarted = GitHubPoller(Store(store.path), api, clock=lambda: NOW + timedelta(hours=1))
     assert restarted.collect() == events
+
+
+def test_reverted_issue_edit_restores_current_title(tmp_path):
+    store = Store(tmp_path / "state.sqlite")
+    api = IssueAPI([issue(4, title="original")])
+    poller = GitHubPoller(store, api, clock=lambda: NOW)
+    controller = Controller(store, SimulatedAgent(), TriageOnlyDelivery(), lambda actor, repo: "read",
+                            lambda: NOW, Settings(_env_file=None))
+    try:
+        for title, updated_at in (("original", "2026-09-24T00:00:05Z"),
+                                  ("edited", "2026-09-24T00:00:06Z"),
+                                  ("original", "2026-09-24T00:00:07Z")):
+            api.items[0]["title"] = title
+            api.items[0]["updated_at"] = updated_at
+            for event in poller.collect():
+                controller.handle(event)
+        assert store.workflow((api.repo, 4)).title == "original"
+    finally:
+        controller.close()
 
 
 def test_http_client_reads_every_page_and_rejects_upstream_destination():

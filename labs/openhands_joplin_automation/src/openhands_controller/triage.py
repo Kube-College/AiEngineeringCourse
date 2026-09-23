@@ -76,17 +76,24 @@ class TriageService:
         self.projector = projector
         self._seen: dict[IssueKey, str] = {}
 
-    def step(self) -> None:
-        for event in self.poller.collect():
-            self.controller.handle(event)
+    def step(self, *, poll: bool = True) -> None:
+        polling_error = None
+        if poll:
+            try:
+                for event in self.poller.collect():
+                    self.controller.handle(event)
+            except Exception as exc:
+                polling_error = exc
         self.controller.tick()
+        if polling_error is not None:
+            raise polling_error
         for row in self.controller.store.workflows():
             if row.issue[0] != self.poller.client.repo:
                 continue
             if self._seen.get(row.issue) != row.state:
                 LOG.info("%s#%s: %s", row.repo, row.issue_number, row.state)
                 self._seen[row.issue] = row.state
-            if self.projector is not None:
+            if poll and self.projector is not None:
                 try:
                     self.projector.sync(row.issue)
                 except GitHubRateLimit:
@@ -95,13 +102,17 @@ class TriageService:
                     LOG.exception("status comment update failed for %s#%s", *row.issue)
 
     def run_forever(self, poll_seconds: int) -> None:
+        next_poll = time.monotonic()
         while True:
-            delay = poll_seconds
+            now = time.monotonic()
+            poll = now >= next_poll
+            if poll:
+                next_poll = now + poll_seconds
             try:
-                self.step()
+                self.step(poll=poll)
             except GitHubRateLimit as exc:
-                delay = max(poll_seconds, exc.retry_after)
-                LOG.warning("GitHub rate limited; retrying in %ss", delay)
+                next_poll = now + max(poll_seconds, exc.retry_after)
+                LOG.warning("GitHub rate limited; retrying in %ss", max(poll_seconds, exc.retry_after))
             except Exception:
                 LOG.exception("triage cycle failed; retrying")
-            time.sleep(delay)
+            time.sleep(1)

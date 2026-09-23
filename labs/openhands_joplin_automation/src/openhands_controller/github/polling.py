@@ -35,8 +35,9 @@ class GitHubPoller:
             title, body = str(item["title"]), str(item.get("body") or "")
             revision = revision_hash(title, body)
             number = int(item["number"])
+            observation = str(item["updated_at"])
             events.append(Event(
-                id=f"github:issue:{self.client.repo}:{number}:{revision}", kind="issue",
+                id=f"github:issue:{self.client.repo}:{number}:{observation}:{revision}", kind="issue",
                 issue=(self.client.repo, number), revision=revision,
                 actor=str(item["user"]["login"]), payload={"title": title, "body": body},
             ))
