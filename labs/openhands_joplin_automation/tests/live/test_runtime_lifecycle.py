@@ -43,7 +43,9 @@ def test_marker_and_conversation_survive_container_recreation(tmp_path):
     with ModelGatewayServer(gate, token="local-gateway-token", bind_host="127.0.0.1") as gateway:
         transport = SDKTransport(settings=settings, workspace_factory=lambda d: manager.connect(d.workspace_id),
                                  issue_details=lambda _: ("Persistence marker", "Inspect the workspace"),
-                                 gateway=gateway, gateway_token="local-gateway-token")
+                                 gateway=gateway, gateway_token="local-gateway-token",
+                                 workspace_stop=manager.stop,
+                                 workspace_status=lambda identifier: str(manager.record(identifier)["status"]))
         adapter = OpenHandsAdapter(transport, settings=settings, clock=lambda: datetime.now(timezone.utc))
         conversation_id = adapter.create(dispatch)
         store.update_dispatch(dispatch.id, status=DispatchStatus.CREATED, conversation_id=conversation_id)
@@ -62,3 +64,4 @@ def test_marker_and_conversation_survive_container_recreation(tmp_path):
         assert len(store.dispatches(issue)) == 1
         assert called == []
         manager.stop(workspace_id)
+        assert adapter.observe(active).status is RunStatus.MISSING

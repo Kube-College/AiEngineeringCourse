@@ -23,6 +23,7 @@ class ScriptedTransport:
         self.statuses = []
         self.create_error = None
         self.stopped = []
+        self.forced = []
 
     def create(self, dispatch):
         self.created.append(dispatch.id)
@@ -34,7 +35,7 @@ class ScriptedTransport:
         self.started = dispatch.id
 
     def status(self, dispatch):
-        return self.statuses.pop(0)
+        return self.statuses.pop(0) if self.statuses else {"execution_status": "paused"}
 
     def pause(self, dispatch):
         self.stopped.append((dispatch.id, "pause"))
@@ -45,6 +46,9 @@ class ScriptedTransport:
     def resume(self, dispatch):
         self.resumed = dispatch.id
 
+    def force_stop(self, dispatch):
+        self.forced.append(dispatch.workspace_id)
+
 
 @pytest.fixture
 def fixture(tmp_path):
@@ -53,6 +57,8 @@ def fixture(tmp_path):
     store.create_workflow(issue, "r1", budget_limit=100_000)
     dispatch = Dispatch("d1", issue, "r1", Role.REVIEW, 1, "w1", "conversation-1", "abc123",
                         (datetime.now(timezone.utc) + timedelta(minutes=20)).isoformat())
+    store.create_dispatch(dispatch)
+    store.update_dispatch(dispatch.id, status="running")
     transport = ScriptedTransport()
     adapter = OpenHandsAdapter(transport, settings=Settings(_env_file=None), clock=lambda: datetime.now(timezone.utc))
     return store, dispatch, transport, adapter
@@ -198,6 +204,14 @@ def test_sdk_transport_refuses_inactive_gateway(fixture):
         adapter.create(dispatch)
 
 
+def test_sdk_transport_requires_owned_stop_hooks():
+    gateway = type("Gateway", (), {"active": True, "port": 54321})()
+    transport = SDKTransport(settings=Settings(_env_file=None), workspace_factory=lambda _: object(),
+                             issue_details=lambda _: ("title", "body"), gateway=gateway,
+                             gateway_token="token")
+    assert transport.budget_gate_verified is False
+
+
 def test_sdk_create_queues_prompt_without_starting_model(fixture, monkeypatch):
     sdk = pytest.importorskip("openhands.sdk")
     from openhands.sdk.workspace import RemoteWorkspace
@@ -224,8 +238,109 @@ def test_sdk_create_queues_prompt_without_starting_model(fixture, monkeypatch):
                              workspace_factory=lambda _: RemoteWorkspace(host="http://127.0.0.1:8010",
                                                                           api_key="local", working_dir="/workspace"),
                              issue_details=lambda _: ("Title", "Body"), gateway=gateway,
-                             gateway_token="gateway-dummy")
+                             gateway_token="gateway-dummy", workspace_stop=lambda _: None,
+                             workspace_status=lambda _: "ready")
     transport.create(dispatch)
     assert received[0] == ("initial", None)
     assert received[1][0] == "message"
     assert "Role: review" in received[1][1]
+
+
+def test_finish_action_is_terminal_result():
+    from openhands.sdk.event.llm_convertible.action import ActionEvent
+    from openhands.sdk.tool.builtins.finish import FinishAction
+
+    result = '{"candidate_sha":"abc123","verdict":"pass","findings":[]}'
+    event = ActionEvent.model_construct(source="agent", action=FinishAction(message=result))
+    assert SDKTransport.final_result([event]) == result
+
+
+@pytest.mark.parametrize("response", [
+    {"usage": {"cost": "not-a-cost"}},
+    {"usage": {"cost": "NaN"}},
+    {"usage": {"cost": -1}},
+    ["unexpected response"],
+])
+def test_bad_billing_response_blocks_followup(fixture, response):
+    store, dispatch, _, _ = fixture
+    calls = []
+
+    def provider(payload):
+        calls.append(payload)
+        return 200, response
+
+    gate = ModelRequestGate(Budget(store), dispatch, provider)
+    request = {"model": "openai/gpt-5.6-terra", "messages": [{"role": "user", "content": "Hi"}],
+               "max_tokens": 1000, "stream": False}
+    assert gate.forward(request)[0] == 502
+    assert Budget(store).snapshot(dispatch.issue).unknown is True
+    with pytest.raises(CapabilityError):
+        gate.forward(request)
+    assert len(calls) == 1
+
+
+def test_gate_recovery_marks_abandoned_reservation_unknown(fixture):
+    store, dispatch, _, _ = fixture
+    budget = Budget(store)
+    assert budget.reserve(dispatch.issue, "abandoned", 1000)
+    ModelRequestGate(budget, dispatch, lambda _: (200, {}))
+    assert budget.snapshot(dispatch.issue).unknown is True
+
+
+def test_gate_rejects_expired_and_stopped_dispatches(fixture):
+    store, dispatch, _, _ = fixture
+    calls = []
+    request = {"model": "openai/gpt-5.6-terra", "messages": [{"role": "user", "content": "Hi"}],
+               "max_tokens": 1000, "stream": False}
+    expired = Dispatch(**{**dispatch.__dict__, "deadline": "2020-01-01T00:00:00+00:00"})
+    gate = ModelRequestGate(Budget(store), expired, lambda payload: calls.append(payload) or (200, {}))
+    with pytest.raises(CapabilityError, match="authorised"):
+        gate.forward(request)
+    row = store.workflow(dispatch.issue)
+    store.cas_workflow(dispatch.issue, row.version, stop_requested="cancel")
+    gate = ModelRequestGate(Budget(store), dispatch, lambda payload: calls.append(payload) or (200, {}))
+    with pytest.raises(CapabilityError, match="authorised"):
+        gate.forward(request)
+    assert calls == []
+
+
+def test_gate_rejects_superseded_and_paused_dispatches(fixture):
+    store, dispatch, _, _ = fixture
+    calls = []
+    request = {"model": "openai/gpt-5.6-terra", "messages": [{"role": "user", "content": "Hi"}],
+               "max_tokens": 1000, "stream": False}
+    gate = ModelRequestGate(Budget(store), dispatch, lambda payload: calls.append(payload) or (200, {}))
+    row = store.workflow(dispatch.issue)
+    store.cas_workflow(dispatch.issue, row.version, revision="r2")
+    with pytest.raises(CapabilityError, match="authorised"):
+        gate.forward(request)
+    row = store.workflow(dispatch.issue)
+    store.cas_workflow(dispatch.issue, row.version, revision="r1")
+    store.update_dispatch(dispatch.id, status="paused")
+    with pytest.raises(CapabilityError, match="authorised"):
+        gate.forward(request)
+    assert calls == []
+
+
+def test_unresponsive_stop_forces_owned_workspace(fixture):
+    _, dispatch, transport, adapter = fixture
+    transport.statuses = [{"execution_status": "running"}]
+    adapter.stop(dispatch, cancel=True)
+    assert transport.stopped == [("d1", "interrupt")]
+    assert transport.forced == ["w1"]
+
+
+def test_failed_sdk_stop_forces_owned_workspace(fixture):
+    _, dispatch, transport, adapter = fixture
+    transport.interrupt = lambda _: (_ for _ in ()).throw(TimeoutError("server unresponsive"))
+    adapter.stop(dispatch, cancel=True)
+    assert transport.forced == ["w1"]
+
+
+def test_sdk_status_reports_stopped_workspace_without_recreation(fixture):
+    _, dispatch, _, _ = fixture
+    transport = SDKTransport(settings=Settings(_env_file=None),
+                             workspace_factory=lambda _: pytest.fail("recreated stopped workspace"),
+                             issue_details=lambda _: ("title", "body"), gateway=None,
+                             workspace_status=lambda _: "stopped")
+    assert transport.status(dispatch) == {"execution_status": "missing"}

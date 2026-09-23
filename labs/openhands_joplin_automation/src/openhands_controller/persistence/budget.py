@@ -41,6 +41,11 @@ class Budget:
         with self.store.connection() as db:
             return _has_unknown(db, issue)
 
+    def recover_reserved(self, issue: IssueKey) -> None:
+        """A new gateway cannot know whether old in-flight calls were billed."""
+        with self.store.transaction() as db:
+            db.execute("UPDATE usage SET status='unknown' WHERE repo=? AND issue_number=? AND status='reserved'", issue)
+
     def can_start_request(self, issue: IssueKey) -> bool:
         """Check whether any positive request reservation could be made."""
         with self.store.connection() as db:
