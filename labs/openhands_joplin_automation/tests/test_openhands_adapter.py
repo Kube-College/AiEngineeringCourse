@@ -169,6 +169,24 @@ def test_gateway_accepts_chat_completion_token_field_and_requests_cost(fixture):
     assert Budget(store).snapshot(dispatch.issue).actual_microusd == 4400
 
 
+def test_gateway_defaults_omitted_stream_to_nonstreaming(fixture):
+    store, dispatch, _, _ = fixture
+    sent = []
+
+    def provider(payload):
+        sent.append(payload)
+        return 200, {"usage": {"prompt_tokens": 2, "completion_tokens": 3}}
+
+    gate = ModelRequestGate(Budget(store), dispatch, provider)
+    request = {"model": "openai/gpt-5.6-terra", "messages": [{"role": "user", "content": "Hi"}],
+               "max_tokens": 1000}
+    assert gate.forward(request)[0] == 200
+    assert sent[0]["stream"] is False
+    with pytest.raises(CapabilityError, match="streaming"):
+        gate.forward({**request, "stream": True})
+    assert len(sent) == 1
+
+
 def test_http_gateway_requires_token_and_budgets_authorised_request(fixture):
     store, dispatch, _, _ = fixture
     called = []

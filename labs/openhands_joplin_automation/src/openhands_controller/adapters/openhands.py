@@ -150,14 +150,16 @@ class ModelRequestGate:
     def forward(self, payload: dict[str, object]) -> tuple[int, dict[str, object]]:
         if not self._authorised():
             raise CapabilityError("dispatch is no longer authorised for model requests")
-        if payload.get("model") != self.MODEL or payload.get("stream") is not False:
-            raise CapabilityError("unsupported model route or streaming mode")
+        if payload.get("model") != self.MODEL:
+            raise CapabilityError("unsupported model route")
+        if payload.get("stream") is not None and payload.get("stream") is not False:
+            raise CapabilityError("streaming mode unsupported")
         caps = [payload[key] for key in ("max_tokens", "max_completion_tokens") if key in payload]
         if (not caps or any(not isinstance(cap, int) or isinstance(cap, bool)
                             or not 1 <= cap <= self.MAX_OUTPUT_TOKENS for cap in caps)):
             raise CapabilityError("output token cap missing or exceeded")
         tokens = max(caps)
-        payload = {**payload, "usage": {"include": True}}
+        payload = {**payload, "stream": False, "usage": {"include": True}}
         input_bytes = len(json.dumps(payload).encode("utf-8"))
         if input_bytes > self.MAX_INPUT_BYTES:
             raise CapabilityError("input byte cap exceeded")
@@ -422,7 +424,18 @@ def run_smoke(settings: Settings, image_digest: str) -> int:
                     raise CapabilityError("smoke run timed out")
                 marker = volume / "marker.txt"
                 if observed.status is not RunStatus.FINISHED or not marker.is_file() or marker.read_text().strip() != "MARKER_OK":
-                    raise CapabilityError("smoke did not produce the required filesystem marker")
+                    snapshot = Budget(store).snapshot(issue)
+                    with store.connection() as db:
+                        request_states = [row["status"] for row in db.execute(
+                            "SELECT status FROM usage WHERE repo=? AND issue_number=?", issue
+                        )]
+                    raise CapabilityError(
+                        "smoke marker check failed: "
+                        f"status={observed.status} reason={observed.error or 'none'} "
+                        f"marker_exists={marker.is_file()} "
+                        f"actual_microusd={snapshot.actual_microusd} unknown={snapshot.unknown} "
+                        f"request_states={request_states}"
+                    )
                 snapshot = Budget(store).snapshot(issue)
                 print(f"model={settings.llm_model} provider=OpenRouter image={image_digest} "
                       f"conversation={conversation_id} marker=verified actual_microusd={snapshot.actual_microusd} "

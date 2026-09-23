@@ -58,7 +58,8 @@ def test_smoke_reports_missing_prerequisites_without_calling_model():
     assert "OpenRouter key" in result.stdout
 
 
-def test_runtime_qualification_command_fails_closed_without_key():
+def test_runtime_qualification_command_fails_closed_without_key(monkeypatch):
+    monkeypatch.setenv("LLM_API_KEY", "")
     result = CliRunner().invoke(app, ["qualify-runtime", "--image-digest", "sha256:" + "a" * 64])
     assert result.exit_code == 2
     assert "OpenRouter key" in result.output
