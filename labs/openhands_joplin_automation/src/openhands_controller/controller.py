@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from .contracts import AgentAdapter, CreateNotSent, Delivery, Dispatch, Event, RunObservation
+from .commands import parse_command
 from .scheduler import SchedulerLock
 from .store import Store
 
@@ -14,7 +15,7 @@ ROLE_STATES = {"queued": ("triage", "triaging"), "implementing": ("implementatio
 ALLOWED = {
     "queued": {"triaging", "cancelled", "needs-human"},
     "triaging": {"awaiting-approval", "needs-human", "paused", "cancelled", "queued"},
-    "awaiting-approval": {"implementing", "cancelled", "needs-human", "queued"},
+    "awaiting-approval": {"implementing", "paused", "cancelled", "needs-human", "queued"},
     "implementing": {"validating", "needs-human", "paused", "cancelled", "queued"},
     "validating": {"reviewing", "needs-human", "cancelled", "queued"},
     "reviewing": {"fixing", "ready-for-human", "needs-human", "paused", "cancelled", "queued"},
@@ -54,8 +55,65 @@ class Controller:
                 return
             row = self.store.workflow(event.issue)
             if row["revision"] != event.revision:
+                active = self.store.active_dispatch()
+                active_here = active and (active["repo"], active["issue_number"]) == event.issue
                 self._move(row, "queued", revision=event.revision, title=title, body=body,
-                           approval_revision=None, stop_requested="revision", reason="issue changed")
+                           approval_revision=None, stop_requested="revision" if active_here else None,
+                           review_cycles=0, reason="issue changed")
+            return
+        if event.kind not in {"command", "label"} or event.payload.get("projection"):
+            return
+        if event.payload.get("action") == "edited" or event.revision != self.store.workflow(event.issue)["revision"]:
+            return
+        if event.kind == "label":
+            if event.payload.get("action") != "added" or event.payload.get("label") != "agent:implement":
+                return
+            parsed = ("implement", None)
+        else:
+            parsed = parse_command(str(event.payload.get("body", "")))
+        if parsed is None:
+            return
+        try:
+            permission = self.permissions(event.actor, event.issue[0])
+        except Exception:
+            return
+        if permission not in {"write", "maintain", "admin"}:
+            return
+        command, argument = parsed
+        row = self.store.workflow(event.issue)
+        active = self.store.active_dispatch()
+        active_here = active and (active["repo"], active["issue_number"]) == event.issue
+        if command == "implement":
+            if row["state"] == "awaiting-approval":
+                self._move(row, "implementing", approval_revision=row["revision"], stop_requested=None)
+            return
+        if command == "cancel":
+            if row["state"] in {"cancelled", "completed"}:
+                return
+            if active_here:
+                self.store.cas_workflow(event.issue, row["version"], stop_requested="cancel")
+            else:
+                self._move(row, "cancelled", stop_requested=None)
+            return
+        if command == "pause":
+            if row["state"] == "paused" or row["stop_requested"]:
+                return
+            if active_here:
+                self.store.cas_workflow(event.issue, row["version"], stop_requested="pause", resume_state=row["state"])
+            elif row["state"] not in {"cancelled", "completed", "needs-human"}:
+                self._move(row, "paused", resume_state=row["state"])
+            return
+        if command == "resume" and row["state"] == "paused" and row["approval_revision"] == row["revision"]:
+            with self.store.connection() as db:
+                unknown = db.execute("SELECT 1 FROM usage WHERE repo=? AND issue_number=? AND status='unknown' LIMIT 1", event.issue).fetchone()
+            if unknown or self.store.active_dispatch():
+                return
+            paused = [d for d in self.store.dispatches(event.issue) if self.store.dispatch_row(d.id)["status"] == "paused"]
+            if not paused:
+                return
+            dispatch = paused[-1]
+            self.store.update_dispatch(dispatch.id, status="resuming")
+            self._submit("resume", dispatch)
             return
 
     def _dispatch(self, row: dict[str, object], role: str) -> None:
@@ -72,8 +130,14 @@ class Controller:
         self._submit("create", dispatch)
 
     def _submit(self, action: str, dispatch: Dispatch):
-        fn = {"create": self.agent.create, "start": self.agent.start, "observe": self.agent.observe,
-              "reconcile": self.agent.observe}[action]
+        if action == "stop_cancel":
+            fn = lambda d: self.agent.stop(d, cancel=True)
+        elif action == "stop_pause" or action == "stop_revision":
+            fn = lambda d: self.agent.stop(d, cancel=False)
+        else:
+            fn = {"create": self.agent.create, "start": self.agent.start,
+                  "observe": self.agent.observe, "reconcile": self.agent.observe,
+                  "stop_observe": self.agent.observe, "resume": self.agent.resume}[action]
         self._pending = (action, dispatch.id, self._pool.submit(fn, dispatch))
 
     def tick(self) -> None:
@@ -100,6 +164,19 @@ class Controller:
             if action == "start":
                 self.store.update_dispatch(dispatch_id, status="running")
                 return
+            if action == "resume":
+                self.store.update_dispatch(dispatch_id, status="running")
+                workflow = self.store.workflow(dispatch.issue)
+                self._move(workflow, str(workflow["resume_state"]), resume_state=None, stop_requested=None)
+                return
+            if action.startswith("stop_") and action != "stop_observe":
+                self._submit("stop_observe", dispatch)
+                return
+            if action == "stop_observe":
+                workflow = self.store.workflow(dispatch.issue)
+                if value.status in {"paused", "failed", "finished", "missing"}:
+                    self._confirm_stop(dispatch, workflow)
+                return
             if action == "reconcile":
                 if value.status == "running":
                     self.store.update_dispatch(dispatch_id, status="running")
@@ -117,7 +194,15 @@ class Controller:
         if active:
             dispatch = self._as_dispatch(active)
             status = active["status"]
-            if status == "retryable":
+            workflow = self.store.workflow(dispatch.issue)
+            if workflow["stop_requested"] and status in {"created", "running", "resuming"}:
+                self.store.update_dispatch(dispatch.id, status="stopping")
+                self._submit(f"stop_{workflow['stop_requested']}", dispatch)
+            elif status == "stopping":
+                self._submit("stop_observe", dispatch)
+            elif status == "resuming":
+                self._submit("reconcile", dispatch)
+            elif status == "retryable":
                 self._submit("create", dispatch)
             elif status in {"intent", "uncertain"}:
                 self.store.update_dispatch(dispatch.id, status="uncertain")
@@ -141,6 +226,18 @@ class Controller:
                 self._dispatch(row, role)
                 return
 
+    def _confirm_stop(self, dispatch: Dispatch, row: dict[str, object]) -> None:
+        request = row["stop_requested"]
+        if request == "revision":
+            self.store.update_dispatch(dispatch.id, status="stale")
+            self.store.cas_workflow(dispatch.issue, row["version"], stop_requested=None)
+        elif request == "cancel":
+            self.store.update_dispatch(dispatch.id, status="cancelled")
+            self._move(row, "cancelled", stop_requested=None)
+        elif request == "pause":
+            self.store.update_dispatch(dispatch.id, status="paused")
+            self._move(row, "paused", stop_requested=None)
+
     @staticmethod
     def _as_dispatch(row: dict[str, object]) -> Dispatch:
         return Dispatch(row["id"], (row["repo"], row["issue_number"]), row["revision"],
@@ -151,9 +248,7 @@ class Controller:
         row = self.store.workflow(dispatch.issue)
         if row["revision"] != dispatch.revision or row["stop_requested"]:
             if observation.status == "finished":
-                self.store.update_dispatch(dispatch.id, status="stale")
-                if row["stop_requested"] == "revision":
-                    self.store.cas_workflow(dispatch.issue, row["version"], stop_requested=None)
+                self._confirm_stop(dispatch, row)
             return
         if self.clock() >= datetime.fromisoformat(dispatch.deadline):
             self.store.update_dispatch(dispatch.id, status="failed")
@@ -212,6 +307,9 @@ class Controller:
                        (*issue, sha, result.profile, int(result.passed), result.evidence_dir))
         if not result.passed or result.candidate_sha != sha:
             self._move(row, "needs-human", reason="validation failed")
+            return
+        current = self.store.workflow(issue)
+        if current["version"] != row["version"] or current["stop_requested"] or current["revision"] != row["revision"]:
             return
         # Publication is a fake in Plan 01. Production publication arrives in Plan 04.
         pr_url = self.delivery.publish(issue, sha)

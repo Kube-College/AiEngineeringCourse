@@ -78,9 +78,19 @@ class Harness:
         self.agent.complete(dispatch.id, result)
 
     def run_to(self, state, max_ticks=200):
+        try:
+            self.store.workflow(("demo/joplin", 1))
+        except KeyError:
+            self.emit("issue", title="Initial scope", body="Initial body")
         for _ in range(max_ticks):
-            if self.store.workflow(("demo/joplin", 1))["state"] == state:
-                return
+            current = self.store.workflow(("demo/joplin", 1))["state"]
+            if current == state:
+                if state != "implementing" or (self.store.active_dispatch() and self.store.active_dispatch()["role"] == "implementation" and self.store.active_dispatch()["status"] == "running"):
+                    return
+            if state in {"awaiting-approval", "implementing"} and current == "triaging":
+                self.complete("triage", scope="test issue", summary="test scope", validation_profile="core")
+            if state == "implementing" and current == "awaiting-approval":
+                self.emit("command", body="/agent implement")
             self.controller.tick()
             sleep(0.001)
         raise AssertionError(f"state {state} not reached; got {self.store.workflow(('demo/joplin', 1))['state']}")

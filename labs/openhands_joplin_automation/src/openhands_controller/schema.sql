@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS dispatches (
   UNIQUE(repo, issue_number, revision, role, attempt)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS one_active_dispatch
-  ON dispatches((1)) WHERE status IN ('intent', 'retryable', 'created', 'running', 'uncertain', 'stopping');
+  ON dispatches((1)) WHERE status IN ('intent', 'retryable', 'created', 'running', 'resuming', 'uncertain', 'stopping');
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY, repo TEXT NOT NULL, issue_number INTEGER NOT NULL,
   status TEXT NOT NULL, container_id TEXT, image_digest TEXT, storage_id TEXT,
