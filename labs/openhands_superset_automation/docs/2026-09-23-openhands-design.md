@@ -1,6 +1,7 @@
 # OpenHands Superset automation design
 
-Date: 23 September 2026. Status: design for review; implementation has not started.
+Date: 23 September 2026. Status: approved for implementation planning;
+implementation has not started. See the [implementation plans](plans/README.md).
 
 ## Purpose and scope
 

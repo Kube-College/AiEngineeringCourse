@@ -19,6 +19,10 @@ See [the design spec](docs/2026-09-23-openhands-design.md) for the agreed
 architecture, deployment choices, and acceptance criteria. The
 [initial brief](docs/implementation-brief.md) records the earlier setup scope.
 
+The [implementation plans](docs/plans/README.md) split delivery into controller
+simulation, OpenHands runtime, Superset validation, and GitHub delivery. They
+include dependencies, shared interfaces, test cases, and completion gates.
+
 ## Local preparation
 
 Prerequisites for the planned demo are Git, uv, Docker with Compose, a disposable
