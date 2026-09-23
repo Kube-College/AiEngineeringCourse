@@ -123,26 +123,29 @@ class WorkspaceManager:
     """Reattach or recreate only labelled workspaces with intact saved storage."""
 
     def __init__(self, store: Store, root: Path, *, docker: DockerPort,
-                 server_token: str, retention_hours: int = 24):
+                 server_token: str, retention_hours: int = 24,
+                 image_repository: str | None = IMAGE_REPOSITORY):
         if not server_token:
             raise ValueError("Agent Server authentication token required")
+        if image_repository not in (None, IMAGE_REPOSITORY):
+            raise ValueError("unsupported image repository")
         self.store = store
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.docker = docker
         self.server_token = server_token
         self.retention = timedelta(hours=retention_hours)
+        self.image_repository = image_repository
         self._auth_hash = hashlib.sha256(server_token.encode()).hexdigest()
 
     def _identifier(self, issue: IssueKey) -> str:
         digest = hashlib.sha256(f"{self.root}:{issue[0]}#{issue[1]}".encode()).hexdigest()[:20]
         return f"workspace-{digest}"
 
-    @staticmethod
-    def _image(digest: str) -> str:
+    def _image(self, digest: str) -> str:
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
             raise ValueError("full image digest required")
-        return f"{IMAGE_REPOSITORY}@{digest}"
+        return f"{self.image_repository}@{digest}" if self.image_repository else digest
 
     def record(self, workspace_id: str) -> dict[str, object]:
         with self.store.connection() as db:

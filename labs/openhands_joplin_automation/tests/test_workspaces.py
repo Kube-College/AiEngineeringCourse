@@ -71,6 +71,16 @@ def test_ensure_persists_stable_identity_and_only_issue_storage_mount(manager):
     assert row["container_id"] == "container-1"
 
 
+def test_local_built_joplin_image_uses_its_content_digest(tmp_path):
+    store = Store(tmp_path / "state.sqlite")
+    store.create_workflow(("demo/joplin", 1), "r1", budget_limit=5_000_000)
+    docker = FakeDocker()
+    workspaces = WorkspaceManager(store, tmp_path / "workspaces", docker=docker,
+                                  server_token="local-server-key", image_repository=None)
+    workspaces.ensure(("demo/joplin", 1), BASE, IMAGE)
+    assert docker.runs[0].image == IMAGE
+
+
 def test_restart_reattaches_and_container_loss_reuses_persistent_storage(manager):
     workspaces, docker = manager
     identifier = workspaces.ensure(("demo/joplin", 1), BASE, IMAGE)
