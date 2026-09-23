@@ -4,9 +4,9 @@ from time import sleep
 from threading import Event as ThreadEvent
 from time import monotonic
 
-from openhands_controller.controller import Controller
-from openhands_controller.scheduler import SchedulerLock
-from openhands_controller.contracts import Event, RunObservation
+from openhands_controller.engine.controller import Controller
+from openhands_controller.engine.lock import SchedulerLock
+from openhands_controller.domain.models import Event, RunObservation
 from support import Harness
 
 
@@ -25,7 +25,7 @@ def test_ambiguous_create_is_not_replayed(tmp_path):
     h.restart()
     h.controller.tick()
     assert h.agent.created == created
-    assert h.store.workflow(("demo/joplin", 1))["state"] == "needs-human"
+    assert h.store.workflow(("demo/joplin", 1)).state == "needs-human"
 
 
 def test_two_issues_use_one_active_dispatch(tmp_path):
@@ -45,12 +45,12 @@ def test_malformed_triage_result_needs_human(tmp_path):
     h.run_to("triaging")
     for _ in range(50):
         h.controller.tick()
-        if h.store.active_dispatch()["status"] == "running":
+        if h.store.active_dispatch().status == "running":
             break
         sleep(0.001)
     h.complete("triage", summary="missing scope")
     h.run_to("needs-human")
-    assert h.store.workflow(("demo/joplin", 1))["approval_revision"] is None
+    assert h.store.workflow(("demo/joplin", 1)).approval_revision is None
 
 
 def test_old_revision_result_cannot_advance_workflow(tmp_path):
@@ -59,7 +59,7 @@ def test_old_revision_result_cannot_advance_workflow(tmp_path):
     h.run_to("triaging")
     for _ in range(50):
         h.controller.tick()
-        if h.store.active_dispatch()["status"] == "running":
+        if h.store.active_dispatch().status == "running":
             break
         sleep(0.001)
     h.emit("issue", revision="r2", title="new scope")
@@ -69,8 +69,8 @@ def test_old_revision_result_cannot_advance_workflow(tmp_path):
         if h.store.active_dispatch() is None:
             break
         sleep(0.001)
-    assert h.store.workflow(("demo/joplin", 1))["revision"] == "r2"
-    assert h.store.workflow(("demo/joplin", 1))["state"] == "queued"
+    assert h.store.workflow(("demo/joplin", 1)).revision == "r2"
+    assert h.store.workflow(("demo/joplin", 1)).state == "queued"
     h.run_to("triaging")
     assert h.store.dispatches(("demo/joplin", 1))[-1].revision == "r2"
 
@@ -99,10 +99,10 @@ def test_restart_after_identifier_persisted_does_not_create_again(tmp_path, monk
     for _ in range(50):
         h.controller.tick()
         sleep(0.001)
-        if h.store.active_dispatch()["status"] == "running":
+        if h.store.active_dispatch().status == "running":
             break
     assert h.agent.created == created
-    assert h.store.active_dispatch()["status"] == "running"
+    assert h.store.active_dispatch().status == "running"
 
 
 def test_second_process_lock_is_rejected(tmp_path):
@@ -150,7 +150,7 @@ def test_failure_after_start_does_not_create_again(tmp_path):
     h.restart()
     h.controller.tick()
     assert h.agent.created == created
-    assert h.store.workflow(("demo/joplin", 1))["state"] == "needs-human"
+    assert h.store.workflow(("demo/joplin", 1)).state == "needs-human"
 
 
 def test_tick_stays_responsive_during_remote_create(tmp_path):
@@ -171,7 +171,7 @@ def test_tick_stays_responsive_during_remote_create(tmp_path):
         elapsed = monotonic() - start
         assert entered.wait(1)
         assert elapsed < 0.2
-        assert h.store.active_dispatch()["status"] == "intent"
+        assert h.store.active_dispatch().status == "intent"
     finally:
         release.set()
         h.controller.close()
@@ -193,7 +193,7 @@ def test_dispatch_result_and_workflow_transition_commit_together(tmp_path):
         sleep(0.001)
     else:
         pytest.fail("transition fault was not reached")
-    assert h.store.dispatch_row(dispatch.id)["status"] == "running"
+    assert h.store.dispatch(dispatch.id).status == "running"
     with h.store.transaction() as db:
         db.execute("DROP TRIGGER fail_validating")
     h.restart()
@@ -231,7 +231,7 @@ def test_unknown_remote_status_keeps_global_slot(tmp_path):
     h.agent.observe = lambda dispatch: RunObservation("unknown")
     h.run_to("needs-human")
     active = h.store.active_dispatch()
-    assert active is not None and active["status"] == "uncertain"
+    assert active is not None and active.status == "uncertain"
     created = list(h.agent.created)
     h.controller.handle(Event("issue-2", "issue", ("demo/joplin", 2), "r1", "maintainer", {"title": "second"}))
     for _ in range(5):
@@ -246,24 +246,24 @@ def test_simulated_validation_and_review_handoff(tmp_path):
     h.complete("triage", scope="note titles", summary="update shared model", validation_profile="core")
     h.run_to("awaiting-approval")
     row = h.store.workflow(("demo/joplin", 1))
-    h.store.cas_workflow(("demo/joplin", 1), row["version"], state="implementing", approval_revision="r1")
+    h.store.cas_workflow(("demo/joplin", 1), row.version, state="implementing", approval_revision="r1")
     h.run_to("implementing")
     for _ in range(50):
         h.controller.tick()
         sleep(0.001)
-        if h.store.active_dispatch() and h.store.active_dispatch()["status"] == "running":
+        if h.store.active_dispatch() and h.store.active_dispatch().status == "running":
             break
     h.complete("implementation", summary="changed title logic", changed_paths=["packages/lib/models/Note.ts"])
     h.run_to("reviewing")
     assert len(h.delivery.published) == 1
     implementation = next(d for d in h.store.dispatches(("demo/joplin", 1)) if d.role == "implementation")
-    assert h.store.workflow(("demo/joplin", 1))["candidate_sha"] == f"sha-{implementation.id}"
+    assert h.store.workflow(("demo/joplin", 1)).candidate_sha == f"sha-{implementation.id}"
     for _ in range(50):
         h.controller.tick()
         sleep(0.001)
-        if h.store.active_dispatch() and h.store.active_dispatch()["status"] == "running":
+        if h.store.active_dispatch() and h.store.active_dispatch().status == "running":
             break
-    sha = h.store.workflow(("demo/joplin", 1))["candidate_sha"]
+    sha = h.store.workflow(("demo/joplin", 1)).candidate_sha
     h.complete("review", candidate_sha=sha, verdict="pass", findings=[])
     h.run_to("ready-for-human")
-    assert h.store.workflow(("demo/joplin", 1))["published_sha"] == sha
+    assert h.store.workflow(("demo/joplin", 1)).published_sha == sha

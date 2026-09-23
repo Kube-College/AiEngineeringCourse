@@ -1,4 +1,5 @@
-from ..contracts import CreateNotSent, Dispatch, IssueKey, RunObservation, ValidationResult
+from ..domain.errors import CreateNotSent
+from ..domain.models import Dispatch, IssueKey, RunObservation, ValidationResult
 
 
 class SimulatedAgent:
@@ -48,14 +49,15 @@ class SimulatedAgent:
 class SimulatedDelivery:
     """Records fake validation and publication without Git or HTTP."""
 
-    def __init__(self):
+    def __init__(self, *, passes: bool = True):
         self.published: list[str] = []
+        self.passes = passes
 
     def capture(self, dispatch: Dispatch) -> str:
         return f"sha-{dispatch.id}"
 
     def validate(self, candidate_sha: str, profile: str) -> ValidationResult:
-        return ValidationResult(candidate_sha, profile, True, "simulated-evidence")
+        return ValidationResult(candidate_sha, profile, self.passes, "simulated-evidence")
 
     def publish(self, issue: IssueKey, candidate_sha: str) -> str:
         self.published.append(candidate_sha)

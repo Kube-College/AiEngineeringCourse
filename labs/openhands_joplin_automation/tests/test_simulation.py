@@ -2,12 +2,13 @@ import json
 from threading import Event as ThreadEvent, Thread
 
 import pytest
+from typer.testing import CliRunner
 
-from openhands_controller.cli import main
-from openhands_controller.budget import Budget
-from openhands_controller.config import Config
-from openhands_controller.contracts import RunObservation
-from openhands_controller.store import Store
+from openhands_controller.cli import app
+from openhands_controller.persistence.budget import Budget
+from openhands_controller.config import Settings
+from openhands_controller.domain.models import RunObservation
+from openhands_controller.persistence.store import Store
 from support import Harness
 
 
@@ -18,19 +19,20 @@ from support import Harness
     ("budget", "needs-human"),
     ("cancel", "cancelled"),
 ])
-def test_cli_scenario_persists_outcome(tmp_path, capsys, scenario, expected):
-    main(["simulate", "--state-dir", str(tmp_path), "--scenario", scenario])
-    output = json.loads(capsys.readouterr().out)
+def test_cli_scenario_persists_outcome(tmp_path, scenario, expected):
+    result = CliRunner().invoke(app, ["simulate", "--state-dir", str(tmp_path), "--scenario", scenario])
+    assert result.exit_code == 0, result.output
+    output = json.loads(result.stdout)
     reopened = Store(tmp_path / "controller.sqlite")
     row = reopened.workflow(("demo/joplin", 1))
-    assert row["state"] == expected
+    assert row.state == expected
     assert output["state"] == expected
     if expected == "ready-for-human":
-        assert row["pr_url"]
-        assert row["published_sha"] == row["candidate_sha"]
-        assert Budget(reopened).snapshot(("demo/joplin", 1))["actual_microusd"] == 300_000
+        assert row.pr_url
+        assert row.published_sha == row.candidate_sha
+        assert Budget(reopened).snapshot(("demo/joplin", 1)).actual_microusd == 300_000
     if scenario == "cancel":
-        assert Budget(reopened).snapshot(("demo/joplin", 1))["unknown"] is True
+        assert Budget(reopened).snapshot(("demo/joplin", 1)).unknown is True
 
 
 def test_recorded_but_unapplied_event_is_replayed(tmp_path):
@@ -38,15 +40,15 @@ def test_recorded_but_unapplied_event_is_replayed(tmp_path):
     event = h.issue()
     assert h.store.record_event(event)
     h.controller.handle(event)
-    assert h.store.workflow(("demo/joplin", 1))["state"] == "queued"
+    assert h.store.workflow(("demo/joplin", 1)).state == "queued"
 
 
 def test_configured_timeout_is_used(tmp_path):
-    h = Harness(tmp_path, config=Config(timeout_seconds=2))
+    h = Harness(tmp_path, settings=Settings(_env_file=None, run_timeout_seconds=2))
     h.run_to("implementing")
     h.clock.advance(3)
     h.run_to("needs-human")
-    assert h.store.workflow(("demo/joplin", 1))["reason"] == "timeout"
+    assert h.store.workflow(("demo/joplin", 1)).reason == "timeout"
 
 
 def test_timeout_stops_run_before_handoff(tmp_path):
@@ -83,7 +85,7 @@ def test_unknown_usage_blocks_next_role(tmp_path):
     h.run_to("awaiting-approval")
     h.emit("command", body="/agent implement")
     h.run_to("needs-human")
-    assert h.store.workflow(("demo/joplin", 1))["reason"] == "budget exhausted or unknown"
+    assert h.store.workflow(("demo/joplin", 1)).reason == "budget exhausted or unknown"
 
 
 def test_review_allows_one_fix_then_hands_off(tmp_path):
@@ -91,18 +93,18 @@ def test_review_allows_one_fix_then_hands_off(tmp_path):
     h.run_to("implementing")
     h.complete("implementation", summary="first patch", changed_paths=["packages/lib/models/Note.ts"])
     h.run_to("reviewing")
-    first_sha = h.store.workflow(("demo/joplin", 1))["candidate_sha"]
+    first_sha = h.store.workflow(("demo/joplin", 1)).candidate_sha
     h.complete("review", candidate_sha=first_sha, verdict="changes_requested",
                findings=[{"path": "packages/lib/models/Note.ts", "line": 1, "explanation": "still wrong"}])
     h.run_to("fixing")
     h.complete("fix", summary="corrected", changed_paths=["packages/lib/models/Note.ts"])
     h.run_to("reviewing")
-    second_sha = h.store.workflow(("demo/joplin", 1))["candidate_sha"]
+    second_sha = h.store.workflow(("demo/joplin", 1)).candidate_sha
     assert second_sha != first_sha
     h.complete("review", candidate_sha=second_sha, verdict="changes_requested",
                findings=[{"path": "packages/lib/models/Note.ts", "line": 1, "explanation": "still wrong"}])
     h.run_to("needs-human")
-    assert h.store.workflow(("demo/joplin", 1))["review_cycles"] == 1
+    assert h.store.workflow(("demo/joplin", 1)).review_cycles == 1
 
 
 def test_cancel_during_validation_prevents_publication(tmp_path):
@@ -128,4 +130,4 @@ def test_cancel_during_validation_prevents_publication(tmp_path):
         release.set()
         worker.join(timeout=2)
     assert h.delivery.published == []
-    assert h.store.workflow(("demo/joplin", 1))["state"] == "cancelled"
+    assert h.store.workflow(("demo/joplin", 1)).state == "cancelled"

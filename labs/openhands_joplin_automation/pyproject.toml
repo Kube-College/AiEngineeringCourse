@@ -3,10 +3,14 @@ name = "openhands-joplin-controller"
 version = "0.1.0"
 description = "Credential-free controller simulation for the Joplin lab"
 requires-python = ">=3.11,<3.14"
-dependencies = []
+dependencies = [
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+    "typer>=0.27.2",
+]
 
 [project.scripts]
-controller = "openhands_controller.cli:main"
+controller = "openhands_controller.cli:app"
 
 [build-system]
 requires = ["hatchling"]

@@ -37,9 +37,10 @@ From this directory, prepare local configuration:
 cp .env.example .env
 ```
 
-The template records proposed settings for later live integration. Plan 01
-simulations do not read it. Leave credentials empty until the live adapter is
-ready. The simulation uses no GitHub or model credentials. OpenHands packages
+The controller loads these keys through `Settings` in
+`src/openhands_controller/config.py`; unknown keys are rejected. The simulation
+reads the run limits and issue budget from it. Leave credentials empty until the
+live adapter is ready. The simulation uses no GitHub or model credentials. OpenHands packages
 will be pinned after SDK qualification.
 
 Run the persisted storage example from this lab directory:

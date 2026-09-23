@@ -23,11 +23,11 @@ milestone: packaging belongs to the first runnable simulation.
 
 | Path | Responsibility |
 | --- | --- |
-| `src/openhands_controller/contracts.py` | Provider-neutral event, workflow, dispatch, result, and validation records |
-| `config.py`, `cli.py` | Validated configuration and CLI entry points |
-| `store.py`, `schema.sql` | Transactions, durable state, constraints, and usage ledger |
-| `controller.py`, `scheduler.py` | State transitions, dispatch and recovery, single-instance scheduling |
-| `commands.py`, `revision.py`, `budget.py` | Approval parsing, issue revision identity, and per-request accounting |
+| `src/openhands_controller/domain/{models,results,states,ports,errors}.py` | Provider-neutral records, typed role results, state enums and transitions, adapter protocols |
+| `config.py`, `cli.py`, `simulation.py` | `Settings` (pydantic-settings), typer CLI, and credential-free scenarios |
+| `persistence/{store,budget}.py`, `persistence/schema.sql` | Transactions, durable state, constraints, and usage ledger |
+| `engine/controller.py`, `engine/lock.py` | Dispatch and recovery, single-instance scheduling |
+| `domain/commands.py`, `domain/revision.py` | Approval parsing and issue revision identity |
 | `adapters/simulated.py`, `adapters/openhands.py` | Implement the same agent protocol |
 | `runtime/workspaces.py`, `runtime/prompts.py` | Docker lifecycle and typed role outputs |
 | `github/client.py`, `github/polling.py`, `github/projection.py` | HTTP, event collection/actor evidence, and idempotent status projection |
@@ -41,7 +41,7 @@ with `tests/`, `docs/`, `fixtures/`, `validation/`, or `docker/`.
 ## Shared interfaces
 
 Plan 01 owns these types. Later plans implement their protocols, keeping SDK
-objects behind the adapter. Use frozen dataclasses or equivalently strict models.
+objects behind the adapter. Records are frozen pydantic dataclasses and models in `domain/`.
 
 ```python
 IssueKey = tuple[str, int]  # repository, issue number

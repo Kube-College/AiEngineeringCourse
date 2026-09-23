@@ -2,9 +2,10 @@ import pytest
 from threading import Event as ThreadEvent
 from time import sleep
 
-from openhands_controller.commands import parse_command
-from openhands_controller.revision import revision_hash
-from openhands_controller.contracts import Event, EventConflict
+from openhands_controller.domain.commands import parse_command
+from openhands_controller.domain.revision import revision_hash
+from openhands_controller.domain.errors import EventConflict
+from openhands_controller.domain.models import Event
 from support import Harness
 
 
@@ -13,7 +14,7 @@ from support import Harness
     ("/agent pause", ("pause", None)),
     ("/agent resume", ("resume", None)),
     ("/agent cancel", ("cancel", None)),
-    ("/agent budget 7.25", ("budget", "7.25")),
+    ("/agent budget 7.25", ("budget", 7_250_000)),
     ("> /agent implement", None),
     ("```\n/agent implement\n```", None),
     ("`/agent implement`", None),
@@ -44,18 +45,18 @@ def test_issue_edit_revokes_approval(tmp_path):
     h.run_to("implementing")
     h.emit("issue", title="new scope", body="changed", revision="r2")
     h.emit("command", body="/agent resume")
-    assert h.store.workflow(("demo/joplin", 1))["approval_revision"] is None
+    assert h.store.workflow(("demo/joplin", 1)).approval_revision is None
 
 
 def test_early_and_read_only_approvals_are_rejected(tmp_path):
     h = Harness(tmp_path)
     h.emit("issue")
     h.emit("command", body="/agent implement")
-    assert h.store.workflow(("demo/joplin", 1))["approval_revision"] is None
+    assert h.store.workflow(("demo/joplin", 1)).approval_revision is None
     h.run_to("awaiting-approval")
     h.controller.permissions = lambda actor, repo: "read"
     h.emit("command", body="/agent implement")
-    assert h.store.workflow(("demo/joplin", 1))["state"] == "awaiting-approval"
+    assert h.store.workflow(("demo/joplin", 1)).state == "awaiting-approval"
 
 
 def test_edited_and_projection_commands_do_not_execute(tmp_path):
@@ -64,16 +65,16 @@ def test_edited_and_projection_commands_do_not_execute(tmp_path):
     h.emit("command", body="/agent implement", action="edited")
     h.emit("command", body="/agent implement", projection=True)
     h.emit("comment", body="Ordinary discussion")
-    assert h.store.workflow(("demo/joplin", 1))["approval_revision"] is None
+    assert h.store.workflow(("demo/joplin", 1)).approval_revision is None
 
 
 def test_label_presence_does_not_authorise_approval(tmp_path):
     h = Harness(tmp_path)
     h.run_to("awaiting-approval")
     h.emit("label", label="agent:implement", action="present")
-    assert h.store.workflow(("demo/joplin", 1))["approval_revision"] is None
+    assert h.store.workflow(("demo/joplin", 1)).approval_revision is None
     h.emit("label", label="agent:implement", action="added")
-    assert h.store.workflow(("demo/joplin", 1))["approval_revision"] == "r1"
+    assert h.store.workflow(("demo/joplin", 1)).approval_revision == "r1"
 
 
 def test_repeated_event_identity_cannot_change_approval(tmp_path):
@@ -84,7 +85,7 @@ def test_repeated_event_identity_cannot_change_approval(tmp_path):
     h.controller.handle(event)
     with pytest.raises(EventConflict):
         h.controller.handle(Event("approval-1", "command", ("demo/joplin", 1), "r1", "maintainer", {"body": "/agent cancel"}))
-    assert h.store.workflow(("demo/joplin", 1))["state"] == "implementing"
+    assert h.store.workflow(("demo/joplin", 1)).state == "implementing"
 
 
 def test_cancel_queued_issue_while_other_issue_runs(tmp_path):
@@ -93,8 +94,8 @@ def test_cancel_queued_issue_while_other_issue_runs(tmp_path):
     h.controller.handle(Event("second-issue", "issue", ("demo/joplin", 2), "r1", "maintainer", {"title": "second"}))
     h.run_to("triaging")
     h.controller.handle(Event("cancel-second", "command", ("demo/joplin", 2), "r1", "maintainer", {"body": "/agent cancel"}))
-    assert h.store.workflow(("demo/joplin", 2))["state"] == "cancelled"
-    assert h.store.workflow(("demo/joplin", 1))["stop_requested"] is None
+    assert h.store.workflow(("demo/joplin", 2)).state == "cancelled"
+    assert h.store.workflow(("demo/joplin", 1)).stop_requested is None
 
 
 def test_unresponsive_stop_stays_requested(tmp_path):
@@ -114,8 +115,8 @@ def test_unresponsive_stop_stays_requested(tmp_path):
         for _ in range(3):
             h.controller.tick()
         row = h.store.workflow(("demo/joplin", 1))
-        assert row["state"] == "implementing"
-        assert row["stop_requested"] == "cancel"
+        assert row.state == "implementing"
+        assert row.stop_requested == "cancel"
         assert h.delivery.published == []
     finally:
         release.set()
@@ -140,7 +141,7 @@ def test_permission_lookup_failure_rejects_approval(tmp_path):
     h.run_to("awaiting-approval")
     h.controller.permissions = lambda actor, repo: (_ for _ in ()).throw(RuntimeError("unavailable"))
     h.emit("command", body="/agent implement")
-    assert h.store.workflow(("demo/joplin", 1))["approval_revision"] is None
+    assert h.store.workflow(("demo/joplin", 1)).approval_revision is None
 
 
 def test_cancel_during_resume_cannot_restore_implementation(tmp_path):
@@ -165,16 +166,16 @@ def test_cancel_during_resume_cannot_restore_implementation(tmp_path):
         release.set()
     h.run_to("cancelled")
     assert h.delivery.published == []
-    assert h.store.workflow(("demo/joplin", 1))["approval_revision"] == "r1"
+    assert h.store.workflow(("demo/joplin", 1)).approval_revision == "r1"
 
 
 def test_pause_resume_awaiting_approval_restores_nonrunning_stage(tmp_path):
     h = Harness(tmp_path)
     h.run_to("awaiting-approval")
     h.emit("command", body="/agent pause")
-    assert h.store.workflow(("demo/joplin", 1))["state"] == "paused"
+    assert h.store.workflow(("demo/joplin", 1)).state == "paused"
     h.emit("command", body="/agent resume")
-    assert h.store.workflow(("demo/joplin", 1))["state"] == "awaiting-approval"
+    assert h.store.workflow(("demo/joplin", 1)).state == "awaiting-approval"
     h.emit("command", body="/agent implement")
     h.run_to("implementing")
 
@@ -184,7 +185,7 @@ def test_pause_resume_approved_stage_before_dispatch(tmp_path):
     h.run_to("awaiting-approval")
     h.emit("command", body="/agent implement")
     h.emit("command", body="/agent pause")
-    assert h.store.workflow(("demo/joplin", 1))["state"] == "paused"
+    assert h.store.workflow(("demo/joplin", 1)).state == "paused"
     h.emit("command", body="/agent resume")
     h.run_to("implementing")
 
@@ -193,9 +194,9 @@ def test_pause_ready_for_human_is_harmless(tmp_path):
     h = Harness(tmp_path)
     h.emit("issue")
     row = h.store.workflow(("demo/joplin", 1))
-    h.store.cas_workflow(("demo/joplin", 1), row["version"], state="ready-for-human")
+    h.store.cas_workflow(("demo/joplin", 1), row.version, state="ready-for-human")
     h.emit("command", body="/agent pause")
-    assert h.store.workflow(("demo/joplin", 1))["state"] == "ready-for-human"
+    assert h.store.workflow(("demo/joplin", 1)).state == "ready-for-human"
 
 
 def test_paused_triage_can_resume_to_reach_approval(tmp_path):
@@ -203,7 +204,7 @@ def test_paused_triage_can_resume_to_reach_approval(tmp_path):
     h.run_to("triaging")
     for _ in range(100):
         active = h.store.active_dispatch()
-        if active and active["status"] == "running":
+        if active and active.status == "running":
             break
         h.controller.tick()
         sleep(0.001)

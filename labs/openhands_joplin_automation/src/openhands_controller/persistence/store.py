@@ -5,7 +5,20 @@ from dataclasses import asdict
 from importlib.resources import files
 from pathlib import Path
 
-from .contracts import Dispatch, Event, EventConflict, IssueKey, VersionConflict
+from ..domain.errors import EventConflict, VersionConflict
+from ..domain.models import Dispatch, DispatchRecord, Event, IssueKey, ValidationResult, Workflow
+from ..domain.states import ACTIVE_DISPATCH, DispatchStatus
+
+_WORKFLOW_FIELDS = Workflow.model_fields.keys() - {"repo", "issue_number", "version"}
+_TRANSITION_FIELDS = _WORKFLOW_FIELDS - {"state", "revision", "title", "body", "budget_limit"}
+_DISPATCH_FIELDS = {"status", "conversation_id", "candidate_sha", "result_json", "request_hash", "iterations"}
+_ACTIVE = ", ".join(f"'{status}'" for status in sorted(ACTIVE_DISPATCH))
+
+
+def _assignments(changes: dict[str, object], allowed: set[str], what: str) -> str:
+    if set(changes) - allowed:
+        raise ValueError(f"invalid {what} fields")
+    return "".join(f", {name}=?" for name in changes)
 
 
 class Store:
@@ -13,7 +26,7 @@ class Store:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
-            db.executescript(files("openhands_controller").joinpath("schema.sql").read_text())
+            db.executescript(files(__package__).joinpath("schema.sql").read_text())
             columns = {row["name"] for row in db.execute("PRAGMA table_info(dispatches)")}
         if "iterations" not in columns:
             with self.transaction() as db:
@@ -67,7 +80,7 @@ class Store:
         with self.transaction() as db:
             db.execute("UPDATE events SET outcome='processed' WHERE event_id=?", (event_id,))
 
-    def create_workflow(self, issue: IssueKey, revision: str, *, title: str = "", body: str = "", budget_limit: int = 5_000_000) -> bool:
+    def create_workflow(self, issue: IssueKey, revision: str, *, budget_limit: int, title: str = "", body: str = "") -> bool:
         with self.transaction() as db:
             cursor = db.execute(
                 "INSERT OR IGNORE INTO workflows(repo,issue_number,revision,title,body,state,budget_limit) VALUES(?,?,?,?,?,'queued',?)",
@@ -75,30 +88,32 @@ class Store:
             )
             return cursor.rowcount == 1
 
-    def workflow(self, issue: IssueKey) -> dict[str, object]:
+    def workflow(self, issue: IssueKey) -> Workflow:
         with self.connection() as db:
             row = db.execute("SELECT * FROM workflows WHERE repo=? AND issue_number=?", issue).fetchone()
-            if row is None:
-                raise KeyError(issue)
-            return dict(row)
+        if row is None:
+            raise KeyError(issue)
+        return Workflow.model_validate(dict(row))
 
-    def cas_workflow(self, issue: IssueKey, version: int, **changes: object) -> dict[str, object]:
-        allowed = {"revision", "title", "body", "state", "approval_revision", "reason", "resume_state",
-                   "validation_profile", "candidate_sha", "published_sha", "pr_url", "review_cycles",
-                   "stop_requested", "budget_limit"}
-        if not changes or set(changes) - allowed:
+    def workflows(self) -> list[Workflow]:
+        with self.connection() as db:
+            rows = db.execute("SELECT * FROM workflows ORDER BY repo, issue_number").fetchall()
+        return [Workflow.model_validate(dict(row)) for row in rows]
+
+    def cas_workflow(self, issue: IssueKey, version: int, **changes: object) -> Workflow:
+        if not changes:
             raise ValueError("invalid workflow update")
-        assignments = ", ".join(f"{name}=?" for name in changes)
+        extra = _assignments(changes, _WORKFLOW_FIELDS, "workflow update")
         with self.transaction() as db:
-            cursor = db.execute(
-                f"UPDATE workflows SET {assignments}, version=version+1 WHERE repo=? AND issue_number=? AND version=?",
+            row = db.execute(
+                f"UPDATE workflows SET version=version+1{extra} WHERE repo=? AND issue_number=? AND version=? RETURNING *",
                 (*changes.values(), *issue, version),
-            )
-            if cursor.rowcount != 1:
-                raise VersionConflict(issue)
-        return self.workflow(issue)
+            ).fetchone()
+        if row is None:
+            raise VersionConflict(issue)
+        return Workflow.model_validate(dict(row))
 
-    def create_dispatch(self, dispatch: Dispatch, *, status: str = "intent") -> None:
+    def create_dispatch(self, dispatch: Dispatch, *, status: DispatchStatus = DispatchStatus.INTENT) -> None:
         with self.transaction() as db:
             db.execute(
                 "INSERT INTO dispatches(id,repo,issue_number,revision,role,attempt,workspace_id,conversation_id,candidate_sha,deadline,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -106,38 +121,34 @@ class Store:
                  dispatch.workspace_id, dispatch.conversation_id, dispatch.candidate_sha, dispatch.deadline, status),
             )
 
-    def dispatches(self, issue: IssueKey) -> list[Dispatch]:
+    def dispatches(self, issue: IssueKey) -> list[DispatchRecord]:
         with self.connection() as db:
             rows = db.execute("SELECT * FROM dispatches WHERE repo=? AND issue_number=? ORDER BY rowid", issue).fetchall()
-        return [Dispatch(id=r["id"], issue=(r["repo"], r["issue_number"]), revision=r["revision"],
-                         role=r["role"], attempt=r["attempt"], workspace_id=r["workspace_id"],
-                         conversation_id=r["conversation_id"], candidate_sha=r["candidate_sha"],
-                         deadline=r["deadline"]) for r in rows]
+        return [DispatchRecord.model_validate(dict(row)) for row in rows]
 
-    def dispatch_row(self, dispatch_id: str) -> dict[str, object]:
+    def dispatch(self, dispatch_id: str) -> DispatchRecord:
         with self.connection() as db:
             row = db.execute("SELECT * FROM dispatches WHERE id=?", (dispatch_id,)).fetchone()
-            if row is None:
-                raise KeyError(dispatch_id)
-            return dict(row)
+        if row is None:
+            raise KeyError(dispatch_id)
+        return DispatchRecord.model_validate(dict(row))
+
+    def active_dispatch(self) -> DispatchRecord | None:
+        with self.connection() as db:
+            row = db.execute(f"SELECT * FROM dispatches WHERE status IN ({_ACTIVE}) LIMIT 1").fetchone()
+        return DispatchRecord.model_validate(dict(row)) if row else None
 
     def update_dispatch(self, dispatch_id: str, **changes: object) -> None:
-        allowed = {"status", "conversation_id", "candidate_sha", "result_json", "request_hash", "iterations"}
-        if not changes or set(changes) - allowed:
+        if not changes:
             raise ValueError("invalid dispatch update")
-        assignments = ", ".join(f"{name}=?" for name in changes)
+        assignments = _assignments(changes, _DISPATCH_FIELDS, "dispatch update").removeprefix(", ")
         with self.transaction() as db:
             db.execute(f"UPDATE dispatches SET {assignments} WHERE id=?", (*changes.values(), dispatch_id))
 
     def transition_dispatch(self, dispatch_id: str, issue: IssueKey, version: int,
                             state: str, status: str, result_json: str | None = None,
                             **changes: object) -> None:
-        allowed = {"approval_revision", "reason", "resume_state", "validation_profile",
-                   "candidate_sha", "published_sha", "pr_url", "review_cycles", "stop_requested"}
-        if set(changes) - allowed:
-            raise ValueError("invalid workflow transition fields")
-        assignments = ", ".join(f"{name}=?" for name in changes)
-        extra = f", {assignments}" if assignments else ""
+        extra = _assignments(changes, _TRANSITION_FIELDS, "workflow transition")
         with self.transaction() as db:
             updated = db.execute("UPDATE dispatches SET status=?, result_json=? WHERE id=? AND repo=? AND issue_number=?",
                                  (status, result_json, dispatch_id, *issue))
@@ -150,11 +161,7 @@ class Store:
             if updated.rowcount != 1:
                 raise VersionConflict(issue)
 
-    def active_dispatch(self) -> dict[str, object] | None:
-        with self.connection() as db:
-            row = db.execute("SELECT * FROM dispatches WHERE status IN ('intent','retryable','created','running','resuming','uncertain','stopping') LIMIT 1").fetchone()
-            return dict(row) if row else None
-
-    def workflows(self) -> list[dict[str, object]]:
-        with self.connection() as db:
-            return [dict(row) for row in db.execute("SELECT * FROM workflows ORDER BY repo, issue_number")]
+    def record_validation(self, issue: IssueKey, candidate_sha: str, result: ValidationResult) -> None:
+        with self.transaction() as db:
+            db.execute("INSERT INTO validations(repo,issue_number,candidate_sha,profile,passed,evidence_dir) VALUES(?,?,?,?,?,?)",
+                       (*issue, candidate_sha, result.profile, int(result.passed), result.evidence_dir))

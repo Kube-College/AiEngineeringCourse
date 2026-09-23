@@ -1,28 +1,34 @@
-from dataclasses import dataclass, fields
+from decimal import Decimal
+from pathlib import Path
+from typing import Annotated, Literal
+
+from pydantic import Field, PositiveInt, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-@dataclass(frozen=True)
-class Config:
-    poll_seconds: int = 20
-    timeout_seconds: int = 1200
-    max_iterations: int = 50
-    max_active: int = 1
-    issue_budget_microusd: int = 5_000_000
-    dispatch_estimate_microusd: int = 1_000_000
-    max_fix_cycles: int = 1
-    completed_retention_hours: int = 24
+class Settings(BaseSettings):
+    """Controller settings from the environment and `.env`; keys match `.env.example`."""
 
-    def __post_init__(self):
-        for field in fields(type(self)):
-            value = getattr(self, field.name)
-            if type(value) is not int or value <= 0:
-                raise ValueError(f"{field.name} must be a positive integer")
-        if self.max_active != 1:
-            raise ValueError("the local controller supports one active execution")
+    model_config = SettingsConfigDict(env_file=".env", extra="forbid", frozen=True)
 
-    @classmethod
-    def from_mapping(cls, values: dict[str, object]) -> "Config":
-        unknown = set(values) - {field.name for field in fields(cls)}
-        if unknown:
-            raise ValueError(f"unknown configuration keys: {', '.join(sorted(unknown))}")
-        return cls(**values)
+    agent_backend: Literal["simulated", "openhands"] = "simulated"
+    state_dir: Path = Path(".data")
+    workspace_dir: Path = Path(".workspaces")
+    poll_seconds: PositiveInt = 20
+    run_timeout_seconds: PositiveInt = 1200
+    max_iterations: PositiveInt = 50
+    issue_budget_usd: Annotated[Decimal, Field(gt=0, decimal_places=6)] = Decimal(5)
+    dispatch_estimate_microusd: PositiveInt = 1_000_000
+    max_fix_cycles: PositiveInt = 1
+    completed_retention_hours: PositiveInt = 24
+    max_active: Literal[1] = 1
+    github_writes_enabled: bool = False
+    gh_repo: str = ""
+    gh_token: SecretStr = SecretStr("")
+    llm_model: str = "openai/gpt-5.6-terra"
+    llm_api_key: SecretStr = SecretStr("")
+    llm_base_url: str = "https://openrouter.ai/api/v1"
+
+    @property
+    def issue_budget_microusd(self) -> int:
+        return int(self.issue_budget_usd * 1_000_000)

@@ -1,14 +1,14 @@
 import pytest
 
-from openhands_controller.budget import Budget
-from openhands_controller.store import Store
+from openhands_controller.persistence.budget import Budget
+from openhands_controller.persistence.store import Store
 from support import Harness
 
 
 @pytest.fixture
 def budget(tmp_path):
     store = Store(tmp_path / "budget.sqlite")
-    store.create_workflow(("demo/joplin", 1), "r1")
+    store.create_workflow(("demo/joplin", 1), "r1", budget_limit=5_000_000)
     return Budget(store)
 
 
@@ -25,7 +25,7 @@ def test_duplicate_settlement_is_idempotent_and_conflict_is_rejected(budget):
     budget.settle(issue, "req-1", 150_000)
     with pytest.raises(ValueError):
         budget.settle(issue, "req-1", 175_000)
-    assert budget.snapshot(issue)["actual_microusd"] == 150_000
+    assert budget.snapshot(issue).actual_microusd == 150_000
 
 
 def test_cumulative_usage_replay_does_not_add_cost(budget):
@@ -34,10 +34,10 @@ def test_cumulative_usage_replay_does_not_add_cost(budget):
     budget.observe_cumulative(issue, "req-1", 120_000)
     budget.observe_cumulative(issue, "req-1", 120_000)
     budget.observe_cumulative(issue, "req-1", 100_000)
-    assert budget.snapshot(issue)["reported_microusd"] == 120_000
+    assert budget.snapshot(issue).reported_microusd == 120_000
     budget.settle(issue, "req-1", 120_000)
-    assert budget.snapshot(issue)["actual_microusd"] == 120_000
-    assert budget.snapshot(issue)["estimated_microusd"] == 300_000
+    assert budget.snapshot(issue).actual_microusd == 120_000
+    assert budget.snapshot(issue).estimated_microusd == 300_000
 
 
 def test_lower_final_report_cannot_restore_budget(budget):
@@ -45,7 +45,7 @@ def test_lower_final_report_cannot_restore_budget(budget):
     budget.reserve(issue, "req-1", 300_000)
     budget.observe_cumulative(issue, "req-1", 200_000)
     budget.settle(issue, "req-1", 100_000)
-    assert budget.snapshot(issue)["actual_microusd"] == 200_000
+    assert budget.snapshot(issue).actual_microusd == 200_000
 
 
 def test_reported_spend_above_estimate_consumes_allowance(budget):
@@ -61,9 +61,9 @@ def test_restart_and_revision_keep_issue_spend(budget):
     budget.reserve(issue, "req-1", 1_000_000)
     budget.settle(issue, "req-1", 900_000)
     row = budget.store.workflow(issue)
-    budget.store.cas_workflow(issue, row["version"], revision="r2")
+    budget.store.cas_workflow(issue, row.version, revision="r2")
     reopened = Budget(Store(budget.store.path))
-    assert reopened.snapshot(issue)["actual_microusd"] == 900_000
+    assert reopened.snapshot(issue).actual_microusd == 900_000
     assert reopened.reserve(issue, "req-2", 4_100_000)
     assert not reopened.reserve(issue, "req-3", 1)
 
@@ -92,12 +92,12 @@ def test_invalid_budget_command_does_not_change_limit(tmp_path, body):
     h = Harness(tmp_path)
     h.emit("issue")
     h.emit("command", body=body)
-    assert h.store.workflow(("demo/joplin", 1))["budget_limit"] == 5_000_000
+    assert h.store.workflow(("demo/joplin", 1)).budget_limit == 5_000_000
 
 
 def test_authorised_budget_command_increases_total_without_resuming(tmp_path):
     h = Harness(tmp_path)
     h.emit("issue")
     h.emit("command", body="/agent budget 7.50")
-    assert h.store.workflow(("demo/joplin", 1))["budget_limit"] == 7_500_000
-    assert h.store.workflow(("demo/joplin", 1))["state"] == "queued"
+    assert h.store.workflow(("demo/joplin", 1)).budget_limit == 7_500_000
+    assert h.store.workflow(("demo/joplin", 1)).state == "queued"
