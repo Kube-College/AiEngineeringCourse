@@ -1,0 +1,22 @@
+[project]
+name = "openhands-joplin-controller"
+version = "0.1.0"
+description = "Credential-free controller simulation for the Joplin lab"
+requires-python = ">=3.11,<3.14"
+dependencies = []
+
+[project.scripts]
+controller = "openhands_controller.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openhands_controller"]
+
+[dependency-groups]
+dev = ["pytest>=8,<10"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

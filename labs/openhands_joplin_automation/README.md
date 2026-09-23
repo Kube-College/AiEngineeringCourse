@@ -11,9 +11,10 @@ pull request.
 
 ## Current state
 
-The local development branch, design, and implementation plans are established. No controller,
-OpenHands adapter, container image, or runnable demo has been implemented yet.
-Keep this work local while it is WIP.
+The local development branch, design, and implementation plans are established.
+The controller has a credential-free SQLite simulation. The OpenHands adapter,
+container image, and live demo are planned work. Keep this work local while it
+is WIP.
 
 See [the design spec](docs/2026-09-23-openhands-design.md) for the agreed
 architecture, deployment choices, and acceptance criteria. The
@@ -35,11 +36,21 @@ From this directory, prepare local configuration:
 cp .env.example .env
 ```
 
-The template records proposed controller settings. It is not consumed by an
-application yet. Leave credentials empty until the live adapter is ready.
-The first implementation slice will run a deterministic simulation without
-GitHub or model credentials. Python dependencies and OpenHands packages will be
-pinned after checking the selected SDK release and Docker workspace example.
+The template records proposed controller settings. Leave credentials empty
+until the live adapter is ready. The simulation uses no GitHub or model
+credentials. OpenHands packages will be pinned after SDK qualification.
+
+Run the persisted storage example from this lab directory:
+
+```sh
+rtk proxy uv run controller simulate --state-dir /tmp/openhands-demo-01
+rtk proxy uv run pytest tests/test_store.py -q
+```
+
+The first command records a queued demo issue in SQLite and prints its state.
+Repeating the command reopens the same state without creating another event.
+The lab uses its own `pyproject.toml` and `uv.lock`; it does not modify the
+parent Python project.
 
 ## Target repository
 
