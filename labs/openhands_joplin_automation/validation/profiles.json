@@ -1,0 +1,55 @@
+{
+  "base_sha": "1d6beb0443e6d958b2c241f45978bd5de069f309",
+  "qualification": "linux-qualified",
+  "profiles": {
+    "core-16638": {
+      "patches": ["core_16638.patch"],
+      "commands": [
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspaces", "foreach", "-Rt", "--from", "@joplin/utils", "run", "build"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/fork-uslug", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/turndown", "build"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/turndown-plugin-gfm", "build"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/htmlpack", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/renderer", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/lib", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "linter-ci", "packages/lib/markdownUtils.ts", "packages/lib/models/Note.ts", "packages/lib/models/Note.test.ts"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/lib", "test", "--runInBand", "--runTestsByPath", "models/Note.test.js"]
+      ]
+    },
+    "desktop-16261": {
+      "patches": ["desktop_16261.patch"],
+      "playwright_spec": "desktop_16261.spec.ts",
+      "commands": [
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspaces", "foreach", "-Rt", "--from", "@joplin/utils", "run", "build"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/fork-uslug", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/turndown", "build"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/turndown-plugin-gfm", "build"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/htmlpack", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/renderer", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/lib", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/app-desktop", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "linter-ci", "packages/app-desktop/gui/PromptDialog.tsx", "packages/app-desktop/gui/PromptDialog.test.ts", "packages/app-desktop/integration-tests/desktop_16261.spec.ts"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/app-desktop", "test", "--runInBand", "--runTestsByPath", "gui/PromptDialog.test.ts"],
+        ["xvfb-run", "-a", "node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/app-desktop", "test-ui", "desktop_16261.spec.ts", "--reporter=line"]
+      ]
+    },
+    "combined": {
+      "patches": ["core_16638.patch", "desktop_16261.patch"],
+      "playwright_spec": "desktop_16261.spec.ts",
+      "commands": [
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspaces", "foreach", "-Rt", "--from", "@joplin/utils", "run", "build"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/fork-uslug", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/turndown", "build"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/turndown-plugin-gfm", "build"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/htmlpack", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/renderer", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/lib", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/app-desktop", "tsc"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "linter-ci", "packages/lib/markdownUtils.ts", "packages/lib/models/Note.ts", "packages/lib/models/Note.test.ts", "packages/app-desktop/gui/PromptDialog.tsx", "packages/app-desktop/gui/PromptDialog.test.ts", "packages/app-desktop/integration-tests/desktop_16261.spec.ts"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/lib", "test", "--runInBand", "--runTestsByPath", "models/Note.test.js"],
+        ["node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/app-desktop", "test", "--runInBand", "--runTestsByPath", "gui/PromptDialog.test.ts"],
+        ["xvfb-run", "-a", "node", ".yarn/releases/yarn-4.16.0.cjs", "workspace", "@joplin/app-desktop", "test-ui", "desktop_16261.spec.ts", "--reporter=line"]
+      ]
+    }
+  }
+}

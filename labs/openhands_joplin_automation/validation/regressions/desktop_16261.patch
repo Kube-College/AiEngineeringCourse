@@ -1,0 +1,89 @@
+diff --git a/packages/app-desktop/gui/PromptDialog.test.ts b/packages/app-desktop/gui/PromptDialog.test.ts
+index 45f9ae7e8..ea04023b8 100644
+--- a/packages/app-desktop/gui/PromptDialog.test.ts
++++ b/packages/app-desktop/gui/PromptDialog.test.ts
+@@ -1,4 +1,8 @@
+ import PromptDialog from './PromptDialog';
++import * as React from 'react';
++import * as ReactDOM from 'react-dom';
++import { fireEvent, render, screen } from '@testing-library/react';
++import shim from '@joplin/lib/shim';
+ 
+ describe('PromptDialog', () => {
+ 
+@@ -49,4 +53,75 @@ describe('PromptDialog', () => {
+ 		onKeyDown({ key: 'Escape' });
+ 		expect(onCloseMock).not.toHaveBeenCalled();
+ 	});
++
++	describe('tag prompt interaction', () => {
++		beforeAll(() => {
++			shim.setReactDom(ReactDOM);
++			HTMLDialogElement.prototype.showModal = function() { this.setAttribute('open', ''); };
++			HTMLDialogElement.prototype.close = function() { this.removeAttribute('open'); };
++		});
++		const existing = { value: 'existing-id', label: 'existing' };
++
++		const open = () => {
++			const onClose = jest.fn();
++			const props = {
++				themeId: 1,
++				defaultValue: [] as { value: string; label: string }[],
++				visible: false,
++				buttons: ['ok', 'cancel'],
++				onClose,
++				inputType: 'tags',
++				description: '',
++				autocomplete: [existing],
++				label: 'Add or remove tags:',
++			};
++			const view = render(React.createElement(PromptDialog, props));
++			view.rerender(React.createElement(PromptDialog, { ...props, visible: true }));
++			return { onClose, input: screen.getByRole('combobox'), view };
++		};
++
++		it('closes without adding the suggestion after its input is erased', () => {
++			const { onClose, input } = open();
++			fireEvent.change(input, { target: { value: 'exist' } });
++			for (const value of ['exis', 'exi', 'ex', 'e', '']) {
++				fireEvent.keyDown(input, { key: 'Backspace' });
++				fireEvent.change(input, { target: { value } });
++			}
++			fireEvent.keyDown(input, { key: 'Enter' });
++			expect(onClose).toHaveBeenCalledWith([], null);
++			expect(screen.queryByText('Add or remove tags:')).toBeNull();
++		});
++
++		it('preserves an intentional mouse selection', () => {
++			const { onClose, input } = open();
++			fireEvent.change(input, { target: { value: 'exist' } });
++			fireEvent.mouseDown(input);
++			fireEvent.click(screen.getByText('existing'));
++			fireEvent.click(screen.getByText('OK'));
++			expect(onClose).toHaveBeenCalledWith([existing], 'ok');
++		});
++
++		it('preserves an intentional keyboard selection', () => {
++			const { onClose, input } = open();
++			fireEvent.change(input, { target: { value: 'existing' } });
++			fireEvent.keyDown(input, { key: 'ArrowDown' });
++			fireEvent.keyDown(input, { key: 'Enter' });
++			fireEvent.click(screen.getByText('OK'));
++			expect(onClose).toHaveBeenCalledWith([existing], 'ok');
++		});
++
++		it('cancels with Escape without saving', () => {
++			const { onClose, input } = open();
++			fireEvent.keyDown(input, { key: 'Escape' });
++			expect(onClose).toHaveBeenCalledWith(null, 'cancel');
++		});
++
++		it('saves a deliberately entered new tag', () => {
++			const { onClose, input } = open();
++			fireEvent.change(input, { target: { value: 'fresh tag' } });
++			fireEvent.keyDown(input, { key: 'Enter' });
++			fireEvent.click(screen.getByText('OK'));
++			expect(onClose).toHaveBeenCalledWith([expect.objectContaining({ label: 'fresh tag' })], 'ok');
++		});
++	});
+ });
