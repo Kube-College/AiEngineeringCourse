@@ -1,4 +1,4 @@
-"""Run new GitHub issues through triage and stop at the approval gate."""
+"""Run triage and label-approved implementation on the configured fork."""
 
 import logging
 import json
@@ -47,7 +47,7 @@ def build_live_service(settings: Settings) -> tuple["TriageService", LiveTriageA
                             gateway_token=gateway_token, gateway_port=settings.gateway_port)
     controller = Controller(
         store, agent, TriageOnlyDelivery(),
-        lambda actor, repo: (_ for _ in ()).throw(RuntimeError("approval intake is disabled")),
+        client.permission,
         lambda: datetime.now(timezone.utc), settings,
         workspace_id_for_issue=manager.identifier,
     )
@@ -57,7 +57,9 @@ def build_live_service(settings: Settings) -> tuple["TriageService", LiveTriageA
 
 
 class TriageOnlyDelivery:
-    """Prevent unimplemented publication operations in the triage-only runner."""
+    """Stop after implementation while validation and publication are unavailable."""
+
+    stop_after_implementation = True
 
     def capture(self, dispatch: Dispatch) -> str:
         raise RuntimeError("implementation delivery is not enabled")

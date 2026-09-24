@@ -1,4 +1,4 @@
-"""Compose the qualified OpenHands adapter for a triage-only controller."""
+"""Compose the qualified OpenHands adapter for one active agent dispatch."""
 
 import json
 import os
@@ -14,6 +14,7 @@ from ..domain.models import Dispatch, RunObservation
 from ..persistence.budget import Budget
 from ..persistence.store import Store
 from .gateway import ModelGatewayServer, openrouter_provider
+from .agents import resolve_model
 from .workspaces import WorkspaceManager
 
 
@@ -65,6 +66,7 @@ class LiveTriageAgent:
         gate = ModelRequestGate(
             Budget(self.store), dispatch,
             openrouter_provider(self.settings.llm_api_key.get_secret_value()),
+            model_route=resolve_model(dispatch.role, self.settings),
         )
         gateway = self.gateway_factory(gate, token=self.gateway_token,
                                        bind_host="127.0.0.1", port=self.gateway_port)

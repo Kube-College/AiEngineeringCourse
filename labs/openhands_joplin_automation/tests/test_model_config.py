@@ -1,11 +1,15 @@
 import pytest
 import subprocess
 import sys
+from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 from typer.testing import CliRunner
 from openhands_controller.cli import app
 
 from openhands_controller.config import Settings
+from openhands_controller.domain.states import Role
+from openhands_controller.runtime.agents import AGENTS
 from openhands_controller.runtime.prompts import build_gateway_llm_config, build_llm_config, role_prompt
 
 
@@ -22,7 +26,7 @@ def test_model_route_is_openrouter():
 
 def test_model_route_rejects_missing_key_and_changed_provider():
     with pytest.raises(ValueError, match="OpenRouter key"):
-        build_llm_config(Settings(_env_file=None))
+        build_llm_config(Settings(_env_file=None, llm_api_key=""))
     with pytest.raises(ValueError, match="OpenRouter model"):
         build_llm_config(Settings(_env_file=None, llm_api_key="dummy", llm_model="openai/gpt-5.6-terra",
                                   llm_base_url="https://api.openai.com/v1"))
@@ -39,6 +43,35 @@ def test_live_sdk_config_routes_only_through_budget_gateway():
     assert config["api_mode"] == "chat"
     assert config["stream"] is False
     assert "real-provider-key" not in repr(config)
+
+
+def test_review_role_can_select_a_priced_model_without_changing_the_default(monkeypatch):
+    from openhands_controller.runtime.agents import ModelRoute, resolve_model
+    route = ModelRoute("example/reviewer", Decimal("0.5"), Decimal("1.5"))
+    monkeypatch.setitem(AGENTS, Role.REVIEW, replace(AGENTS[Role.REVIEW], model=route))
+    settings = Settings(_env_file=None, llm_api_key="dummy", llm_model="openai/gpt-5.6-terra")
+
+    review = build_gateway_llm_config(settings, "http://host.docker.internal:54321/api/v1",
+                                      "gateway-key", role=Role.REVIEW)
+    triage = build_gateway_llm_config(settings, "http://host.docker.internal:54321/api/v1",
+                                      "gateway-key", role=Role.TRIAGE)
+
+    assert review["model"] == "openrouter/example/reviewer"
+    assert triage["model"] == "openrouter/openai/gpt-5.6-terra"
+    assert resolve_model(Role.REVIEW, settings) == route
+
+
+def test_unpriced_global_default_model_is_rejected():
+    settings = Settings(_env_file=None, llm_api_key="dummy", llm_model="example/unpriced")
+    with pytest.raises(ValueError, match="priced model route"):
+        build_llm_config(settings)
+
+
+def test_custom_model_cannot_enable_terra_token_cost_fallback():
+    from openhands_controller.runtime.agents import ModelRoute
+    with pytest.raises(ValueError, match="reported provider cost"):
+        ModelRoute("example/reviewer", Decimal("3"), Decimal("7"),
+                   allow_token_fallback=True)
 
 
 def test_review_prompt_is_tied_to_candidate_sha():

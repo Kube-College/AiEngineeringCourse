@@ -6,6 +6,7 @@ from openhands_controller.domain.commands import parse_command
 from openhands_controller.domain.revision import revision_hash
 from openhands_controller.domain.errors import EventConflict
 from openhands_controller.domain.models import Event
+from openhands_controller.persistence.store import Store
 from support import Harness
 
 
@@ -73,8 +74,41 @@ def test_label_presence_does_not_authorise_approval(tmp_path):
     h.run_to("awaiting-approval")
     h.emit("label", label="agent:implement", action="present")
     assert h.store.workflow(("demo/joplin", 1)).approval_revision is None
-    h.emit("label", label="agent:implement", action="added")
+    h.emit("label", label="agent:implement", action="added", created_at="2099-01-01T00:00:00Z")
     assert h.store.workflow(("demo/joplin", 1)).approval_revision == "r1"
+
+
+def test_label_added_before_triage_finished_cannot_authorise_implementation(tmp_path):
+    h = Harness(tmp_path)
+    h.run_to("awaiting-approval")
+    h.emit("label", label="agent:implement", action="added", created_at="2020-01-01T00:00:00Z")
+    assert h.store.workflow(("demo/joplin", 1)).state == "awaiting-approval"
+    h.emit("label", label="agent:implement", action="added", created_at="2099-01-01T00:00:00Z")
+    assert h.store.workflow(("demo/joplin", 1)).state == "implementing"
+
+
+def test_approval_in_same_second_as_triage_handoff_waits_for_newer_event(tmp_path):
+    h = Harness(tmp_path)
+    h.run_to("awaiting-approval")
+    with h.store.transaction() as db:
+        db.execute("UPDATE run_history SET created_at='2026-09-24T12:00:00.500Z' "
+                   "WHERE kind='workflow' AND value='awaiting-approval'")
+    h.emit("label", label="agent:implement", action="added", created_at="2026-09-24T12:00:00Z")
+    assert h.store.workflow(("demo/joplin", 1)).state == "awaiting-approval"
+    h.emit("label", label="agent:implement", action="added", created_at="2026-09-24T12:00:01Z")
+    assert h.store.workflow(("demo/joplin", 1)).state == "implementing"
+
+
+def test_existing_awaiting_workflow_accepts_only_post_upgrade_approval(tmp_path):
+    h = Harness(tmp_path)
+    h.run_to("awaiting-approval")
+    with h.store.transaction() as db:
+        db.execute("DROP TABLE run_history")
+    Store(h.store.path)
+    h.emit("label", label="agent:implement", action="added", created_at="2020-01-01T00:00:00Z")
+    assert h.store.workflow(("demo/joplin", 1)).state == "awaiting-approval"
+    h.emit("label", label="agent:implement", action="added", created_at="2099-01-01T00:00:00Z")
+    assert h.store.workflow(("demo/joplin", 1)).state == "implementing"
 
 
 def test_repeated_event_identity_cannot_change_approval(tmp_path):

@@ -13,6 +13,7 @@ from ..domain.models import Dispatch, IssueKey, RunObservation, Usage
 from ..domain.results import ROLE_RESULTS, ReviewResult
 from ..domain.states import IDLE, DispatchStatus, Role, RunStatus
 from ..persistence.budget import Budget
+from ..runtime.agents import DEFAULT_MODEL, ModelRoute, build_agent, resolve_model
 from ..runtime.prompts import build_gateway_llm_config, role_prompt
 
 
@@ -121,17 +122,18 @@ class OpenHandsAdapter:
 class ModelRequestGate:
     """Reserve each attempt before forwarding one OpenRouter request."""
 
-    MODEL = "openai/gpt-5.6-terra"
     MAX_OUTPUT_TOKENS = 4096
-    MAX_INPUT_BYTES = 128_000
+    MAX_INPUT_BYTES = 256_000
 
     def __init__(self, budget: Budget, dispatch: Dispatch,
                  provider: Callable[[dict[str, object]], tuple[int, dict[str, object]]],
-                 clock: Callable[[], datetime] | None = None):
+                 clock: Callable[[], datetime] | None = None,
+                 *, model_route: ModelRoute = DEFAULT_MODEL):
         self.budget = budget
         self.dispatch = dispatch
         self.provider = provider
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.model_route = model_route
         self.budget.recover_reserved(dispatch.issue)
 
     def _authorised(self) -> bool:
@@ -150,7 +152,7 @@ class ModelRequestGate:
     def forward(self, payload: dict[str, object]) -> tuple[int, dict[str, object]]:
         if not self._authorised():
             raise CapabilityError("dispatch is no longer authorised for model requests")
-        if payload.get("model") != self.MODEL:
+        if payload.get("model") != self.model_route.name:
             raise CapabilityError("unsupported model route")
         if payload.get("stream") is not None and payload.get("stream") is not False:
             raise CapabilityError("streaming mode unsupported")
@@ -163,7 +165,7 @@ class ModelRequestGate:
         input_bytes = len(json.dumps(payload).encode("utf-8"))
         if input_bytes > self.MAX_INPUT_BYTES:
             raise CapabilityError("input byte cap exceeded")
-        estimate = input_bytes * 2 + tokens * 12
+        estimate = self.model_route.reserve_microusd(input_bytes, tokens)
         request_id = f"{self.dispatch.id}:model:{uuid4()}"
         if not self.budget.reserve(self.dispatch.issue, request_id, estimate):
             raise CapabilityError("issue budget exhausted or unknown")
@@ -194,12 +196,14 @@ class ModelRequestGate:
                     raise ValueError("invalid provider cost")
                 actual = int(cost * 1_000_000)
             else:
+                if not self.model_route.allow_token_fallback:
+                    raise ValueError("provider cost unavailable for selected model")
                 prompt = usage.get("prompt_tokens")
                 completion = usage.get("completion_tokens")
                 if not all(isinstance(item, int) and not isinstance(item, bool) and item >= 0
                            for item in (prompt, completion)):
                     raise ValueError("provider usage unavailable")
-                actual = prompt * 2 + completion * 12
+                actual = self.model_route.reserve_microusd(prompt, completion)
             self.budget.settle(self.dispatch.issue, request_id, actual)
             return status, response
         except Exception:
@@ -245,7 +249,6 @@ class SDKTransport:
         from openhands.sdk import LLM, RemoteConversation
         from openhands.sdk.conversation.request import StartConversationRequest
         from openhands.sdk.workspace import LocalWorkspace
-        from openhands.tools.preset.default import get_default_agent
 
         workspace = self._workspace(dispatch)
         title, body = self.issue_details(dispatch.issue)
@@ -253,9 +256,10 @@ class SDKTransport:
                              candidate_sha=dispatch.candidate_sha)
         config = build_gateway_llm_config(
             self.settings, f"http://host.docker.internal:{self.gateway.port}/api/v1", self.gateway_token,
+            role=dispatch.role,
         )
         request = StartConversationRequest(
-            agent=get_default_agent(llm=LLM(**config), cli_mode=True),
+            agent=build_agent(dispatch.role, LLM(**config)),
             workspace=LocalWorkspace(working_dir=workspace.working_dir),
             conversation_id=self._id(dispatch),
             max_iterations=self.settings.max_iterations,
@@ -368,7 +372,8 @@ def run_smoke(settings: Settings, image_digest: str) -> int:
         store.create_dispatch(dispatch)
         gateway_token = secrets.token_urlsafe(32)
         provider = openrouter_provider(settings.llm_api_key.get_secret_value())
-        gate = ModelRequestGate(Budget(store), dispatch, provider)
+        gate = ModelRequestGate(Budget(store), dispatch, provider,
+                                model_route=resolve_model(dispatch.role, settings))
         container_id = None
         with ModelGatewayServer(gate, token=gateway_token, bind_host="0.0.0.0") as gateway:
             try:
@@ -437,7 +442,7 @@ def run_smoke(settings: Settings, image_digest: str) -> int:
                         f"request_states={request_states}"
                     )
                 snapshot = Budget(store).snapshot(issue)
-                print(f"model={settings.llm_model} provider=OpenRouter image={image_digest} "
+                print(f"model={resolve_model(dispatch.role, settings).name} provider=OpenRouter image={image_digest} "
                       f"conversation={conversation_id} marker=verified actual_microusd={snapshot.actual_microusd} "
                       f"unknown={snapshot.unknown}")
                 return 0

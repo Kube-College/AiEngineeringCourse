@@ -1,0 +1,11 @@
+{
+  "source_url": "https://github.com/laurent22/joplin/issues/16574",
+  "captured_at": "2026-09-24",
+  "base_sha": "1d6beb0443e6d958b2c241f45978bd5de069f309",
+  "scope": "packages/app-desktop/gui/NoteEditor/utils/useFormNote.ts and new note/to-do focus",
+  "description": "With title focus selected for new notes and to-dos, creating either item can leave the editor without keyboard focus. The reporter used Joplin 3.7.18 on Linux with the Markdown editor.",
+  "validation_profile": null,
+  "test_spec": "validation/desktop_16574.spec.ts",
+  "reproduction_status": "not-reproduced-on-pinned-baseline",
+  "reported_failure": "After clicking New note or New to-do, typing without another click does not enter text in the title field."
+}

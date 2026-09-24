@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS dispatches (
   workspace_id TEXT NOT NULL, conversation_id TEXT, candidate_sha TEXT,
   deadline TEXT NOT NULL, status TEXT NOT NULL, request_hash TEXT,
   result_json TEXT, iterations INTEGER NOT NULL DEFAULT 0,
+  model TEXT, profile_hash TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(repo, issue_number) REFERENCES workflows(repo, issue_number),
   UNIQUE(repo, issue_number, revision, role, attempt)
@@ -41,6 +42,26 @@ CREATE TABLE IF NOT EXISTS usage (
   actual_microusd INTEGER, status TEXT NOT NULL, reported_microusd INTEGER,
   PRIMARY KEY(repo, issue_number, request_id),
   FOREIGN KEY(repo, issue_number) REFERENCES workflows(repo, issue_number)
+);
+CREATE TABLE IF NOT EXISTS run_history (
+  id INTEGER PRIMARY KEY, repo TEXT NOT NULL, issue_number INTEGER NOT NULL,
+  dispatch_id TEXT, kind TEXT NOT NULL, value TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  FOREIGN KEY(repo, issue_number) REFERENCES workflows(repo, issue_number)
+);
+CREATE INDEX IF NOT EXISTS run_history_issue ON run_history(repo, issue_number, id);
+CREATE TABLE IF NOT EXISTS feedback (
+  dispatch_id TEXT PRIMARY KEY, rating TEXT NOT NULL
+    CHECK(rating IN ('useful', 'partly-useful', 'incorrect')),
+  note TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  FOREIGN KEY(dispatch_id) REFERENCES dispatches(id)
+);
+CREATE TABLE IF NOT EXISTS agent_events (
+  dispatch_id TEXT NOT NULL, event_id TEXT NOT NULL,
+  kind TEXT NOT NULL, source TEXT NOT NULL, tool TEXT, timestamp TEXT NOT NULL,
+  PRIMARY KEY(dispatch_id, event_id),
+  FOREIGN KEY(dispatch_id) REFERENCES dispatches(id)
 );
 CREATE TABLE IF NOT EXISTS budget_increases (
   event_id TEXT PRIMARY KEY, repo TEXT NOT NULL, issue_number INTEGER NOT NULL,

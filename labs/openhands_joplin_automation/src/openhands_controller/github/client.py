@@ -5,7 +5,7 @@ import re
 import time
 from collections.abc import Callable
 from urllib.error import HTTPError
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 
@@ -79,6 +79,31 @@ class GitHubClient:
 
     def list_comments(self, number: int) -> list[dict]:
         return self._pages(f"/repos/{self.repo}/issues/{number}/comments")
+
+    def list_issue_events(self, number: int) -> list[dict]:
+        return self._pages(f"/repos/{self.repo}/issues/{number}/events")
+
+    def list_repository_labels(self) -> list[dict]:
+        return self._pages(f"/repos/{self.repo}/labels")
+
+    def create_label(self, name: str, color: str, description: str) -> dict:
+        return self.request("POST", f"/repos/{self.repo}/labels",
+                            {"name": name, "color": color, "description": description})
+
+    def list_issue_labels(self, number: int) -> list[dict]:
+        return self._pages(f"/repos/{self.repo}/issues/{number}/labels")
+
+    def add_issue_labels(self, number: int, names: list[str]) -> list[dict]:
+        return self.request("POST", f"/repos/{self.repo}/issues/{number}/labels", {"labels": names})
+
+    def remove_issue_label(self, number: int, name: str) -> list[dict]:
+        return self.request("DELETE", f"/repos/{self.repo}/issues/{number}/labels/{quote(name, safe='')}")
+
+    def permission(self, actor: str, repo: str) -> str:
+        if repo != self.repo or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", actor):
+            raise ValueError("invalid permission lookup")
+        result = self.request("GET", f"/repos/{self.repo}/collaborators/{quote(actor, safe='')}/permission")
+        return str(result["permission"])
 
     def create_comment(self, number: int, body: str) -> dict:
         return self.request("POST", f"/repos/{self.repo}/issues/{number}/comments", {"body": body})

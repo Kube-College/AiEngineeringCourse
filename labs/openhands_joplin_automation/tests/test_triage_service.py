@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from time import sleep
 
 import pytest
@@ -21,9 +21,16 @@ class FakeIssueAPI:
 
     def __init__(self):
         self.items = []
+        self.issue_events = {}
 
     def list_open_issues(self, since):
         return list(self.items)
+
+    def list_issue_events(self, number):
+        return self.issue_events.get(number, [])
+
+    def permission(self, actor, repo):
+        return "write" if actor == "owner" and repo == self.repo else "read"
 
 
 def test_new_issue_triggers_one_triage_and_waits_for_approval(tmp_path):
@@ -64,10 +71,64 @@ def test_new_issue_triggers_one_triage_and_waits_for_approval(tmp_path):
         controller.close()
 
 
+def test_owner_added_approval_label_starts_one_implementer_and_hands_off(tmp_path):
+    store = Store(tmp_path / "state.sqlite")
+    api = FakeIssueAPI()
+    poller = GitHubPoller(store, api, clock=lambda: NOW)
+    agent = SimulatedAgent()
+    controller = Controller(store, agent, TriageOnlyDelivery(), api.permission,
+                            lambda: NOW, Settings(_env_file=None))
+    service = TriageService(controller, poller, projector=None)
+    issue = (api.repo, 17)
+    try:
+        api.items.append({"id": 17, "number": 17, "title": "Note title", "body": "Steps",
+                          "created_at": "2026-09-24T00:00:05Z", "updated_at": "2026-09-24T00:00:05Z",
+                          "state": "open", "user": {"login": "reporter"}})
+        for _ in range(100):
+            service.step()
+            active = store.active_dispatch()
+            if active and active.status == "running":
+                break
+            sleep(0.001)
+        agent.complete(active.id, {"scope": "desktop", "summary": "Reproduced",
+                                   "validation_profile": "core"})
+        for _ in range(100):
+            service.step()
+            if store.workflow(issue).state == "awaiting-approval":
+                break
+            sleep(0.001)
+        approval_time = (datetime.now(timezone.utc) + timedelta(seconds=1)).replace(microsecond=0)
+        stamp = approval_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        api.issue_events[17] = [{"id": 301, "event": "labeled", "created_at": stamp,
+                                 "actor": {"login": "owner"}, "label": {"name": "agent:implement"}}]
+        api.items[0]["updated_at"] = stamp
+        for _ in range(100):
+            service.step()
+            active = store.active_dispatch()
+            if active and active.role == "implementation" and active.status == "running":
+                break
+            sleep(0.001)
+        assert active.role == "implementation"
+        assert store.workflow(issue).approval_revision == store.workflow(issue).revision
+        agent.complete(active.id, {"summary": "Updated focus", "changed_paths": ["packages/app-desktop/gui/Note.tsx"]})
+        for _ in range(100):
+            service.step()
+            if store.workflow(issue).state == "needs-human":
+                break
+            sleep(0.001)
+        assert store.workflow(issue).state == "needs-human"
+        assert [row.role for row in store.dispatches(issue)] == ["triage", "implementation"]
+        service.step()
+        assert len(store.dispatches(issue)) == 2
+    finally:
+        controller.close()
+
+
 def test_live_start_requires_token_model_and_real_agent():
     with pytest.raises(ValueError, match="GH_TOKEN"):
         validate_live_settings(Settings(_env_file=None, agent_backend="openhands",
-                                        gh_repo="lspinheiro/joplin", llm_api_key="model-key"))
+                                        gh_repo="lspinheiro/joplin", gh_token="",
+                                        llm_api_key="model-key"))
     with pytest.raises(ValueError, match="AGENT_BACKEND"):
         validate_live_settings(Settings(_env_file=None, agent_backend="simulated",
                                         gh_repo="lspinheiro/joplin", gh_token="token",
@@ -93,13 +154,14 @@ def test_triage_dispatch_uses_persistent_workspace_identity(tmp_path):
 def test_live_service_loads_pinned_image_and_configured_fork(tmp_path):
     settings = Settings(_env_file=None, state_dir=tmp_path / "state", workspace_dir=tmp_path / "workspaces",
                         agent_backend="openhands", gh_repo="https://github.com/lspinheiro/joplin", gh_token="token",
-                        llm_api_key="model-key")
+                        llm_api_key="model-key", github_writes_enabled=False)
     service, agent = build_live_service(settings)
     try:
         assert service.poller.client.repo == "lspinheiro/joplin"
         assert agent.base_sha == "1d6beb0443e6d958b2c241f45978bd5de069f309"
         assert agent.image_digest.startswith("sha256:")
         assert service.projector is None
+        assert service.controller.permissions.__self__ is service.poller.client
     finally:
         service.controller.close()
         agent.close()

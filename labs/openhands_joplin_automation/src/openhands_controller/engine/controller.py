@@ -12,7 +12,7 @@ from ..domain.commands import parse_command
 from ..domain.errors import CreateNotSent
 from ..domain.models import Dispatch, DispatchRecord, Event, IssueKey, RunObservation, Workflow
 from ..domain.ports import AgentAdapter, Delivery
-from ..domain.results import ROLE_RESULTS, ReviewResult, TriageResult
+from ..domain.results import ROLE_RESULTS, ChangeResult, ReviewResult, TriageResult
 from ..domain.states import (ALLOWED, DISPATCH_ROLE, IDLE, PRE_APPROVAL, TERMINAL, DispatchStatus, Role,
                              RunStatus, StopRequest, WorkflowState, check_transition)
 from ..persistence.budget import Budget
@@ -150,6 +150,15 @@ class Controller:
             return None
         if event.kind == "label":
             approved = payload.get("action") == "added" and payload.get("label") == "agent:implement"
+            if approved:
+                entered = self.store.state_entered_at(event.issue, S.AWAITING_APPROVAL)
+                try:
+                    added_at = datetime.fromisoformat(str(payload["created_at"]).replace("Z", "+00:00"))
+                    entered_at = datetime.fromisoformat(str(entered).replace("Z", "+00:00"))
+                except (KeyError, ValueError):
+                    return None
+                if entered is None or added_at < entered_at:
+                    return None
             parsed = ("implement", None) if approved else None
         else:
             parsed = parse_command(str(payload.get("body", "")))
@@ -287,7 +296,12 @@ class Controller:
         dispatch = Dispatch(dispatch_id, issue, row.revision, role, attempt,
                             self.workspace_id_for_issue(issue), None, row.candidate_sha,
                             (self.clock() + timedelta(seconds=self.settings.run_timeout_seconds)).isoformat())
-        self.store.create_dispatch(dispatch)
+        model, profile_hash = ("simulated", None)
+        if self.settings.agent_backend == "openhands":
+            from ..performance import profile_snapshot
+
+            model, profile_hash = profile_snapshot(role, self.settings)
+        self.store.create_dispatch(dispatch, model=model, profile_hash=profile_hash)
         if role == Role.TRIAGE:
             self._move(row, S.TRIAGING)
         self._submit(Action.CREATE, dispatch)
@@ -349,6 +363,9 @@ class Controller:
         elif isinstance(result, TriageResult):
             self._finish(row, dispatch, S.AWAITING_APPROVAL, result=raw,
                          validation_profile=result.validation_profile)
+        elif isinstance(result, ChangeResult) and getattr(self.delivery, "stop_after_implementation", False):
+            self._finish(row, dispatch, S.NEEDS_HUMAN, result=raw,
+                         reason="implementation finished; validation and publication are not enabled")
         elif not isinstance(result, ReviewResult):
             self._finish(row, dispatch, S.VALIDATING, result=raw)
         elif result.verdict == "pass":

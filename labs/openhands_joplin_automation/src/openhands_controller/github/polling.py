@@ -27,18 +27,35 @@ class GitHubPoller:
 
     def collect(self) -> list[Event]:
         events = []
+        known = {row.issue for row in self.store.workflows()}
         for item in self.client.list_open_issues(self.since):
             if "pull_request" in item or item.get("state") != "open":
                 continue
-            if str(item["created_at"]) < self.since:
+            number = int(item["number"])
+            issue = (self.client.repo, number)
+            if str(item["created_at"]) < self.since and issue not in known:
                 continue
             title, body = str(item["title"]), str(item.get("body") or "")
             revision = revision_hash(title, body)
-            number = int(item["number"])
             observation = str(item["updated_at"])
             events.append(Event(
                 id=f"github:issue:{self.client.repo}:{number}:{observation}:{revision}", kind="issue",
-                issue=(self.client.repo, number), revision=revision,
+                issue=issue, revision=revision,
                 actor=str(item["user"]["login"]), payload={"title": title, "body": body},
             ))
+            for action in self.client.list_issue_events(number):
+                if (action.get("event") != "labeled" or
+                    (action.get("label") or {}).get("name") != "agent:implement" or
+                    str(action.get("created_at") or "") < self.since or
+                    not isinstance(action.get("id"), int) or
+                    not (action.get("actor") or {}).get("login")):
+                    continue
+                event_id = f"github:label:{self.client.repo}:{number}:{action['id']}"
+                saved = self.store.recorded_event(event_id)
+                events.append(saved or Event(
+                    id=event_id, kind="label", issue=issue, revision=revision,
+                    actor=str(action["actor"]["login"]),
+                    payload={"action": "added", "label": "agent:implement",
+                             "created_at": str(action["created_at"])},
+                ))
         return events

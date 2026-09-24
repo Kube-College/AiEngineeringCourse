@@ -74,8 +74,11 @@ class Budget:
             ).fetchone()["total"]
             if spent + estimate > limit:
                 return False
-            db.execute("INSERT INTO usage(repo,issue_number,request_id,reserved_microusd,status) VALUES(?,?,?,?,?)",
-                       (*issue, request_id, estimate, "reserved"))
+            candidate = request_id.split(":model:", 1)[0]
+            owned = db.execute("SELECT id FROM dispatches WHERE id=? AND repo=? AND issue_number=?",
+                               (candidate, *issue)).fetchone()
+            db.execute("INSERT INTO usage(repo,issue_number,request_id,dispatch_id,reserved_microusd,status) VALUES(?,?,?,?,?,?)",
+                       (*issue, request_id, candidate if owned else None, estimate, "reserved"))
             return True
 
     @validate_call

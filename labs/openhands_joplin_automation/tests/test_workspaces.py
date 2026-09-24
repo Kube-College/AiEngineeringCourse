@@ -1,8 +1,11 @@
 from datetime import datetime, timedelta, timezone
+import json
+from uuid import uuid4
 
 import pytest
 
 from openhands_controller.persistence.store import Store
+from openhands_controller.domain.models import Dispatch
 from openhands_controller.runtime.workspaces import ContainerInfo, WorkspaceManager
 
 
@@ -161,6 +164,37 @@ def test_cleanup_removes_only_completed_owned_expired_workspace(manager):
     assert workspaces.cleanup(now) == [identifier]
     assert docker.inspect(docker.runs[0].name) is None
     assert not (workspaces.root / identifier).exists()
+
+
+def test_cleanup_retains_redacted_agent_activity_after_workspace_deletion(manager):
+    workspaces, _ = manager
+    issue = ("demo/joplin", 1)
+    identifier = workspaces.ensure(issue, BASE, IMAGE)
+    conversation = uuid4()
+    dispatch = Dispatch("triage-1", issue, "r1", "triage", 1, identifier,
+                        str(conversation), None, "2026-09-24T12:00:00+00:00")
+    workspaces.store.create_dispatch(dispatch)
+    events_dir = (workspaces.root / identifier / "workspace" / "conversations"
+                  / conversation.hex / "events")
+    events_dir.mkdir(parents=True)
+    (events_dir / "event-00000.json").write_text(json.dumps({
+        "id": "agent-event-1", "kind": "ActionEvent", "source": "agent",
+        "timestamp": "2026-09-24T11:00:00Z",
+        "action": {"kind": "terminal", "command": "echo PRIVATE_TOKEN"},
+    }))
+    now = datetime.now(timezone.utc)
+    with workspaces.store.transaction() as db:
+        db.execute("UPDATE workflows SET state='completed' WHERE repo=? AND issue_number=?", issue)
+        db.execute("UPDATE workspaces SET completed_at=? WHERE id=?",
+                   ((now - timedelta(hours=25)).isoformat(), identifier))
+    assert workspaces.cleanup(now) == [identifier]
+    with workspaces.store.connection() as db:
+        saved = db.execute("SELECT kind,source,tool,timestamp FROM agent_events WHERE dispatch_id='triage-1'").fetchall()
+        raw = db.execute("SELECT * FROM agent_events WHERE dispatch_id='triage-1'").fetchall()
+    assert [tuple(row) for row in saved] == [
+        ("ActionEvent", "agent", "terminal", "2026-09-24T11:00:00Z")
+    ]
+    assert "PRIVATE_TOKEN" not in str([tuple(row) for row in raw])
 
 
 def test_foreign_container_with_same_name_cannot_be_reattached_or_deleted(manager):

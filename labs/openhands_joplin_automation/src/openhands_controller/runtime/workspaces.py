@@ -308,6 +308,13 @@ class WorkspaceManager:
                 if info is not None:
                     self.docker.remove(spec.name)
             storage = self.root / str(row["id"])
+            from ..performance import read_workspace_events
+
+            for dispatch in self.store.dispatches((str(row["repo"]), int(row["issue_number"]))):
+                if dispatch.workspace_id == row["id"] and dispatch.conversation_id:
+                    self.store.record_agent_events(
+                        dispatch.id, read_workspace_events(storage, dispatch.conversation_id)
+                    )
             shutil.rmtree(storage)
             (self.root / ".auth" / f"{row['id']}.env").unlink(missing_ok=True)
             with self.store.transaction() as db:

@@ -1,0 +1,1 @@
+Review the exact candidate SHA in the task message. Inspect the diff and validation evidence. Report a verdict with actionable findings tied to paths and lines. Do not make lasting changes; the review checkout is discarded.

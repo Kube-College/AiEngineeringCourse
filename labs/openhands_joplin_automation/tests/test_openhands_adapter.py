@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
+from decimal import Decimal
 from http.client import HTTPConnection
 import json
 
@@ -13,6 +15,7 @@ from openhands_controller.domain.states import Role, RunStatus
 from openhands_controller.persistence.budget import Budget
 from openhands_controller.persistence.store import Store
 from openhands_controller.runtime.gateway import ModelGatewayServer
+from openhands_controller.runtime.agents import AGENTS
 
 
 class ScriptedTransport:
@@ -169,6 +172,46 @@ def test_gateway_accepts_chat_completion_token_field_and_requests_cost(fixture):
     assert Budget(store).snapshot(dispatch.issue).actual_microusd == 4400
 
 
+def test_custom_model_gate_allows_only_its_route_and_uses_reported_cost(fixture):
+    from openhands_controller.runtime.agents import ModelRoute
+    store, dispatch, _, _ = fixture
+    route = ModelRoute("example/reviewer", Decimal("3"), Decimal("7"))
+    calls = []
+
+    def provider(payload):
+        calls.append(payload)
+        return 200, {"usage": {"cost": "0.000027", "prompt_tokens": 2, "completion_tokens": 3}}
+
+    gate = ModelRequestGate(Budget(store), dispatch, provider, model_route=route)
+    request = {"model": route.name, "messages": [{"role": "user", "content": "Hi"}],
+               "max_tokens": 1000, "stream": False}
+    with pytest.raises(CapabilityError, match="unsupported model route"):
+        gate.forward({**request, "model": "openai/gpt-5.6-terra"})
+    assert calls == []
+
+    assert gate.forward(request)[0] == 200
+    snapshot = Budget(store).snapshot(dispatch.issue)
+    assert snapshot.estimated_microusd >= 7000
+    assert snapshot.actual_microusd == 27
+    assert calls[0]["model"] == "example/reviewer"
+
+
+def test_custom_model_without_reported_cost_blocks_further_requests(fixture):
+    from openhands_controller.runtime.agents import ModelRoute
+    store, dispatch, _, _ = fixture
+    route = ModelRoute("example/reviewer", Decimal("3"), Decimal("7"))
+    gate = ModelRequestGate(Budget(store), dispatch,
+                            lambda _: (200, {"usage": {"prompt_tokens": 2, "completion_tokens": 3}}),
+                            model_route=route)
+    request = {"model": route.name, "messages": [{"role": "user", "content": "Hi"}],
+               "max_tokens": 1000, "stream": False}
+
+    assert gate.forward(request)[0] == 502
+    assert Budget(store).snapshot(dispatch.issue).unknown is True
+    with pytest.raises(CapabilityError, match="budget"):
+        gate.forward(request)
+
+
 def test_gateway_defaults_omitted_stream_to_nonstreaming(fixture):
     store, dispatch, _, _ = fixture
     sent = []
@@ -211,6 +254,32 @@ def test_http_gateway_requires_token_and_budgets_authorised_request(fixture):
         connection.close()
 
 
+def test_http_gateway_allows_bounded_large_context_and_rejects_excess(fixture):
+    store, dispatch, _, _ = fixture
+    Budget(store).increase(dispatch.issue, 1_000_000, "larger-context-budget")
+    calls = []
+
+    def provider(payload):
+        calls.append(payload)
+        return 200, {"usage": {"cost": "0.001"}}
+
+    gate = ModelRequestGate(Budget(store), dispatch, provider)
+    with ModelGatewayServer(gate, token="gateway-secret", bind_host="127.0.0.1") as server:
+        connection = HTTPConnection("127.0.0.1", server.port)
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer gateway-secret"}
+        request = {"model": "openai/gpt-5.6-terra", "messages": [{"role": "user", "content": "x" * 150_000}],
+                   "max_tokens": 1000, "stream": False}
+        connection.request("POST", "/api/v1/chat/completions", body=json.dumps(request), headers=headers)
+        assert connection.getresponse().status == 200
+        assert len(calls) == 1
+
+        request["messages"][0]["content"] = "x" * 270_000
+        connection.request("POST", "/api/v1/chat/completions", body=json.dumps(request), headers=headers)
+        assert connection.getresponse().status == 402
+        assert len(calls) == 1
+        connection.close()
+
+
 def test_sdk_transport_refuses_inactive_gateway(fixture):
     _, dispatch, _, _ = fixture
     transport = SDKTransport(settings=Settings(_env_file=None, llm_api_key="dummy"),
@@ -231,10 +300,13 @@ def test_sdk_transport_requires_owned_stop_hooks():
 
 
 def test_sdk_create_queues_prompt_without_starting_model(fixture, monkeypatch):
+    from openhands_controller.runtime.agents import ModelRoute
     sdk = pytest.importorskip("openhands.sdk")
     from openhands.sdk.workspace import RemoteWorkspace
 
     _, dispatch, _, _ = fixture
+    route = ModelRoute("example/reviewer", Decimal("3"), Decimal("7"))
+    monkeypatch.setitem(AGENTS, Role.REVIEW, replace(AGENTS[Role.REVIEW], model=route))
     received = []
 
     class Conversation:
@@ -248,6 +320,7 @@ def test_sdk_create_queues_prompt_without_starting_model(fixture, monkeypatch):
 
     def create(_cls, _workspace, request, **_kwargs):
         received.append(("initial", request.initial_message))
+        received.append(("agent", request.agent))
         return Conversation()
 
     monkeypatch.setattr(sdk.RemoteConversation, "create", classmethod(create))
@@ -260,8 +333,12 @@ def test_sdk_create_queues_prompt_without_starting_model(fixture, monkeypatch):
                              workspace_status=lambda _: "ready")
     transport.create(dispatch)
     assert received[0] == ("initial", None)
-    assert received[1][0] == "message"
-    assert "Role: review" in received[1][1]
+    assert received[1][0] == "agent"
+    assert [tool.name for tool in received[1][1].tools] == ["terminal"]
+    assert received[1][1].llm.model == "openrouter/example/reviewer"
+    assert "candidate SHA" in received[1][1].agent_context.system_message_suffix
+    assert received[2][0] == "message"
+    assert "Role: review" in received[2][1]
 
 
 def test_finish_action_is_terminal_result():
