@@ -1,169 +1,176 @@
 # OpenHands Joplin Automation
 
-Work in progress. This directory will hold a functional demonstration of an
-always-on agent controller. Exercise instructions will be developed after the
-demonstration works.
+This lab runs a local controller that watches issues in your Joplin fork. A new
+issue starts an OpenHands triage agent. After triage, you can add a GitHub label
+to approve an implementation agent. The controller records each run in SQLite
+and shows its progress in a local performance dashboard.
 
-The controller receives events, records durable state, applies policy, and
-dispatches bounded OpenHands conversations. Joplin is the target
-codebase. Human approval gates implementation, and a human merges the resulting
-pull request.
+The current live flow ends at `needs-human` after implementation. It keeps the
+agent workspace for inspection. Candidate validation, pull request publication,
+and automated review are not connected to this live flow yet.
 
-## Current state
+## Set up your fork and credentials
 
-The local branch has a credential-free SQLite lifecycle simulation, a qualified
-OpenHands runtime, and a pinned Joplin image and validation fixtures. A live
-triage runner can now watch new issues in a configured fork. It stops at the
-approval gate. GitHub command intake, implementation, draft PR delivery, and
-review remain later Plan 4 work. Keep this course work local while it is WIP.
+You need Git, [uv](https://docs.astral.sh/uv/getting-started/installation/),
+Docker, a GitHub account, and an [OpenRouter](https://openrouter.ai/) account.
+The image recipe builds for `linux/arm64` and needs enough Docker disk space for
+the Joplin toolchain. Model requests use your OpenRouter account and can incur
+charges. The default controller limit is US$5 per issue.
 
-See [the design spec](docs/2026-09-23-openhands-design.md) for the agreed
-architecture, deployment choices, and acceptance criteria. The
-[initial brief](docs/implementation-brief.md) records the earlier setup scope.
+1. [Fork `laurent22/joplin`](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/fork-a-repo)
+   into your GitHub account. If your fork has no **Issues** tab, enable Issues
+   under **Settings → General → Features**. Your fork is where you will create
+   test issues and watch the controller's labels and comments.
+2. Create a [fine-grained GitHub personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token).
+   Select your account as the resource owner, restrict repository access to
+   **only your Joplin fork**, and grant **Issues: Read and write**. Set an
+   expiration. This live flow uses the token to read issues and label events,
+   check approval permissions, and write labels and comments. It does not
+   create pull requests.
+3. Create a standard [OpenRouter API key](https://openrouter.ai/settings/keys)
+   for model calls. The configured default is
+   [`openai/gpt-5.6-terra`](https://openrouter.ai/openai/gpt-5.6-terra).
+4. Clone this course repository and enter the lab directory:
 
-The [implementation plans](docs/plans/README.md) split delivery into controller
-simulation, OpenHands runtime, Joplin validation, and GitHub delivery. They
-include dependencies, shared interfaces, test cases, and completion gates.
+   ```sh
+   git clone https://github.com/Kube-College/AiEngineeringCourse.git
+   cd AiEngineeringCourse/labs/openhands_joplin_automation
+   uv sync --extra runtime --group dev
+   cp .env.example .env
+   ```
 
-## Local preparation
+5. Edit the ignored `.env` file with your own values:
 
-Prerequisites for the planned demo are Git, uv, Docker with Compose, a disposable
-Joplin checkout or fork, and OpenRouter access to GPT-5.6 Terra. The target
-checkout uses Yarn/TypeScript; the controller remains Python/uv.
+   ```dotenv
+   AGENT_BACKEND=openhands
+   GH_REPO=YOUR_GITHUB_USERNAME/joplin
+   GH_TOKEN=YOUR_FINE_GRAINED_GITHUB_TOKEN
+   LLM_API_KEY=YOUR_OPENROUTER_API_KEY
+   GITHUB_WRITES_ENABLED=true
+   ```
 
-From this directory, prepare local configuration:
+   Keep the other values from `.env.example`, including `LLM_MODEL` and
+   `LLM_BASE_URL`. Do not commit `.env` or paste either token into an issue.
+   `GITHUB_WRITES_ENABLED=true` lets the controller maintain `agent:state:*`
+   labels and post status and agent outcome comments. The dashboard works with
+   the same local `STATE_DIR` whether GitHub writes are enabled or not.
+
+## Prepare the pinned Joplin image
+
+Pull the pinned Agent Server base image, then run the lab's build script:
 
 ```sh
-cp .env.example .env
+docker pull ghcr.io/openhands/agent-server@sha256:44426bffabffa704b54a79cfeae71d0af5e702e80ef1b7276861307ecc9d598c
+bash scripts/build_joplin_image.sh
 ```
 
-The controller loads these keys through `Settings` in
-`src/openhands_controller/config.py`; unknown keys are rejected. The simulation
-uses no GitHub or model credentials.
+The script checks out the Joplin commit in `docker/versions.json`, builds the
+agent image, verifies its toolchain, and records the local image ID in that
+manifest. It currently fetches the pinned source from the course maintainer's
+Joplin fork. Your own fork supplies the GitHub issues; the agent inspects the
+pinned source inside the image.
 
-## Agent roles
+## Run one issue through the agents
 
-Declare each role's tool names, prompt file and selected skills in
-`src/openhands_controller/runtime/agents.py`. Role instructions live under
-`runtime/agent_content/`; shared instructions are in `common.md`. Skills are
-short Markdown files under `runtime/agent_content/skills/`. The factory loads
-only the files named in the role declaration and adds them to OpenHands
-`AgentContext`. It does not load user, public or target-checkout skills.
-
-Each declaration can also set `model=ModelRoute(...)`. An omitted model uses
-`openai/gpt-5.6-terra`, the current `LLM_MODEL` default. For example, a review
-declaration can use `model=ModelRoute("provider/model-id", Decimal("3"),
-Decimal("15"))` while the other roles keep Terra. The two Decimal values are
-conservative input and output budget rates in USD per million tokens. Choose
-rates that cover the selected model's current OpenRouter pricing. The gateway
-reserves against those rates before each call and settles custom models from
-OpenRouter's reported `usage.cost`. A response without a reported cost blocks
-further requests for that issue. Keep `LLM_MODEL` at its default when only some
-roles override it; a different global value requires priced routes for every
-role.
-
-The issue title, body, candidate SHA and result schema remain per-dispatch task
-data in `runtime/prompts.py`. OpenHands keeps its built-in system prompt, with
-the shared and role instructions added as system context. The typed result
-schemas stay in `domain/results.py`, where the controller validates them.
-
-Tool selection limits what the agent sees, but a terminal can still write files.
-The triage and review prompts request no edits; source-level read-only access
-needs a separate workspace permission boundary before relying on it as an
-enforced guarantee.
-
-## Run triage and label-approved implementation
-
-From this lab directory, set `AGENT_BACKEND=openhands`, `GH_REPO` to your fork
-(`lspinheiro/joplin` or its GitHub URL), `GH_TOKEN`, and `LLM_API_KEY` in the
-ignored `.env`. Set `GITHUB_WRITES_ENABLED=true` to let the controller reconcile
-one `agent:state:*` label, maintain its status comment, and post one outcome
-comment for each completed agent run. The token needs **Issues: Read and write**
-on the selected fork. With writes disabled, progress is visible in the terminal
-and the controller still reads approval-label events.
-
-The pinned Joplin image identified by `docker/versions.json` must be present in
-Docker. Run:
+Start the controller from the lab directory:
 
 ```sh
 make run
 ```
 
-Once the terminal says it is watching your fork, manually create a new issue in
-that fork. The controller polls every 20 seconds by default. It logs `queued`,
-`triaging`, then `awaiting-approval` after a successful OpenHands result. A
-state label and status comment show the same progression when GitHub writes are
-enabled. Creating the issue triggers triage without an approval command.
+Wait for `Watching YOUR_GITHUB_USERNAME/joplin ...` in the terminal. Then create
+a **new** issue in your fork with a concrete Joplin problem and steps to
+reproduce it. The first start records a watch start time, so older unknown
+issues are skipped. The controller polls every 20 seconds by default. Watch
+the terminal, issue labels, and comments for `queued`, `triaging`, and
+`awaiting-approval`.
 
-After triage reaches `awaiting-approval`, add **`agent:implement`** to the issue.
-The controller checks the label-addition event and the actor's repository
-permission, then starts the implementer once. A label that was already present
-does not authorise implementation. The controller removes the approval label
-after consuming it. The `agent:state:*` labels show state; editing one does not
-trigger an agent. Agent outcome comments are posted by the token owner and name
-the contributing agent role.
+For a repeatable first issue, use the case in
+[`fixtures/issues/16638.json`](fixtures/issues/16638.json):
 
-This live slice stops at `needs-human` after the implementer finishes. It
-preserves the workspace for inspection. Candidate validation and draft PR
-publication still require the remaining delivery work.
+```text
+Title: Preserve underscores in generated note titles
 
-The first start records a durable watch start time and skips older issues. On
-restart it replays known issues and approval events since that time, using stable
-event IDs to avoid repeating agent runs. State and runtime authentication files remain under
-the ignored `STATE_DIR`; the workspace remains under `WORKSPACE_DIR`.
-Use Ctrl-C to stop the controller.
-
-To inspect run history, cost, validation and redacted agent activity while the
-controller runs, start `make dashboard` in another terminal and open
-<http://127.0.0.1:8765>. The [performance console guide](docs/performance-console.md)
-explains its measurements and the `controller rate` command for human feedback.
-
-Run the persisted storage example from this lab directory:
-
-```sh
-rtk proxy uv run controller simulate --state-dir /tmp/openhands-demo-01
-rtk proxy uv run pytest tests/test_store.py -q
+When a note's first body line is YYYY_MM_, the generated title is YYYYMM.
+Expected: the generated title preserves YYYY_MM_.
 ```
 
-The first command records a queued demo issue in SQLite and prints its state.
-Repeating the command reopens the same state without creating another event.
-The lab uses its own `pyproject.toml` and `uv.lock`; it does not modify the
-parent Python project.
+Once the issue reaches `awaiting-approval`, add the `agent:implement` label to
+that issue. If the label does not exist, create it in your fork's **Issues →
+Labels** page first. The controller accepts a **new label-addition event** from
+a user with write access to the fork. It removes the approval label after
+consuming it and starts the implementation agent once. A label already present
+before the approval state does not trigger implementation. The controller's
+`agent:state:*` labels display state; changing them does not start an agent.
 
-Run each complete scenario with a separate state directory:
+The implementation run ends at `needs-human`. Inspect the outcome comment and
+saved workspace before deciding what to do with the proposed changes. Stop
+the controller with Ctrl-C. Restarting it replays known issues and events
+without starting duplicate runs. SQLite and runtime authentication files live
+under the ignored `STATE_DIR`; agent workspaces live under `WORKSPACE_DIR`.
+
+## Open the local control plane
+
+Keep the controller running. In a second terminal in the same lab directory,
+start the read-only dashboard:
 
 ```sh
-rtk proxy uv run controller simulate --state-dir .data/happy --scenario happy
-rtk proxy uv run controller simulate --state-dir .data/duplicate --scenario duplicate
-rtk proxy uv run controller simulate --state-dir .data/restart --scenario restart
-rtk proxy uv run controller simulate --state-dir .data/budget --scenario budget
-rtk proxy uv run controller simulate --state-dir .data/cancel --scenario cancel
-rtk proxy uv run pytest tests/test_store.py tests/test_dispatch.py tests/test_commands.py tests/test_budget.py tests/test_simulation.py -q
+make dashboard
 ```
 
-The command prints the persisted workflow and budget snapshot. `happy`,
-`duplicate`, and `restart` reach `ready-for-human` with a fake draft URL.
-`budget` reaches `needs-human`; `cancel` reaches `cancelled`. The fake delivery
-does not call GitHub, Git, OpenHands, or a model provider. The US$5 issue cap
-and run limits follow the [approved design](docs/2026-09-23-openhands-design.md).
-Existing simulation databases receive the additive iteration-accounting
-column when reopened.
+Open <http://127.0.0.1:8765>. If that port is in use, run
+`uv run controller dashboard --port 8767` and open
+<http://127.0.0.1:8767>. Both processes read `STATE_DIR` from `.env`.
+Select an issue to see workflow transitions, agent runs, elapsed time, model
+cost, configuration hashes, validation records, and redacted agent activity.
+The browser receives no Agent Server token or raw agent messages. The
+[performance console guide](docs/performance-console.md) explains each field
+and the `controller rate` command for recording your assessment of a run.
 
-## Target repository
+## Configure agents in the registry
 
-The demo targets [Joplin](https://github.com/laurent22/joplin) at the pinned
-`dev` snapshot `1d6beb0443e6d958b2c241f45978bd5de069f309`.
-Candidate fixtures cover shared note-title logic (#16638) and desktop tag input
-(#16261). Both require reproduction before live demo execution. This replaces
-the previous Superset target.
+[`src/openhands_controller/runtime/agents.py`](src/openhands_controller/runtime/agents.py)
+is the declaration point for each role's tools, prompt, skills, and optional
+model. The `AGENTS` registry declares `triage`, `implementation`, `fix`, and
+`review`. The live issue flow currently dispatches triage and implementation.
 
-## Sources
+To change a role, edit its `AgentProfile` entry. Its `tools` tuple names
+OpenHands tools, `prompt` names a file under
+[`runtime/agent_content/`](src/openhands_controller/runtime/agent_content/),
+and `skills` names Markdown files under `runtime/agent_content/skills/`.
+[`common.md`](src/openhands_controller/runtime/agent_content/common.md) applies
+to every role. The role prompt and common instructions are added to the
+OpenHands system context. Issue details and result requirements remain in
+[`runtime/prompts.py`](src/openhands_controller/runtime/prompts.py).
 
-- [Original Devin controller](https://github.com/lspinheiro/devin_superset_automation),
-  inspected at revision `c434fc053a320d20111c8e46904c62ea42f43570`.
-- [OpenHands Software Agent SDK](https://github.com/OpenHands/software-agent-sdk),
-  consulted on 21 September 2026. The SDK exposes agents, conversations, tools,
-  and workspaces; Agent Server provides remote execution.
+For example, a role can select a different OpenRouter model:
 
-The original controller is an architectural reference. Its source has not been
-copied into this lab. Review its licence before reusing implementation code.
+```python
+Role.REVIEW: AgentProfile(
+    "review.md",
+    ("terminal",),
+    ("joplin-repository.md",),
+    model=ModelRoute("provider/model-id", Decimal("3"), Decimal("15")),
+),
+```
+
+The Decimal values are conservative input and output rates in USD per million
+tokens for budget reservation. Check the chosen model's current OpenRouter
+pricing before setting them. Roles without a model override use
+`openai/gpt-5.6-terra`. Restart the controller after editing a declaration or
+instruction file. The dashboard's profile hash helps identify which
+configuration ran. Tool selection controls what the agent sees; terminal
+access can still change files.
+
+## Test the controller without credentials
+
+The SQLite simulation runs without GitHub, Docker, or an OpenRouter key:
+
+```sh
+uv run controller simulate --state-dir .data/simulation --scenario happy
+uv run pytest -q
+```
+
+The simulation uses fake delivery and model results. The test suite covers
+the controller, GitHub projection, agent registry, and dashboard. The lab has
+its own `pyproject.toml` and `uv.lock`.
